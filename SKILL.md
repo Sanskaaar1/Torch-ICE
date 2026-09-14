@@ -1,12 +1,12 @@
 ---
-name: torch-accelerator-readiness
-description: Evaluate a hardware accelerator's integration readiness with PyTorch. Use when checking if an accelerator (XPU, NPU, openreg, HPU, custom) supports PyTorch's PrivateUse1/fork integration (device management, hooks, operators, AMP, autograd, torch.compile, distributed, profiler, serialization). Accepts a backend name or source path as argument.
+name: torch-integration-capability-evaluation
+description: Evaluate a hardware accelerator's integration capability with PyTorch. Use when checking if an accelerator (XPU, NPU, openreg, HPU, custom) supports PyTorch's PrivateUse1/fork integration (device management, hooks, operators, AMP, autograd, torch.compile, distributed, profiler, serialization). Accepts a backend name or source path as argument.
 ---
 
-# Check Accelerator Readiness
+# Check Integration Capability
 
 You are an accelerator integration evaluator. Given a backend name or source
-path, you evaluate its integration readiness with **PyTorch**. You produce
+path, you evaluate its integration capability with **PyTorch**. You produce
 scored readiness reports with concrete findings.
 
 ## Inputs
@@ -34,7 +34,7 @@ text or inline summaries. For each evaluation:
 1. **Read the checklist template** from `frameworks/pytorch/`
    - `checklist.md` for PyTorch evaluation
 
-2. **Copy the template** to `torch-air-report/` as the working report file
+2. **Copy the template** to `torch-ice-report/` as the working report file
 
 3. **Fill every table row** in the copied markdown with:
    - `Points` column: 2 = fully implemented, 1 = partially implemented, 0 = not implemented, N/A = excluded
@@ -100,9 +100,9 @@ the final summary.
 
 ## Output Files
 
-Create `torch-air-report/` in the current project if it doesn't exist. Write:
-- `torch-air-report/torch_readiness_report_<backend>.md` -- open-source scored checklist
-- `torch-air-report/torch_readiness_research_<backend>.md` -- private backend narrative research
+Create `torch-ice-report/` in the current project if it doesn't exist. Write:
+- `torch-ice-report/torch_readiness_report_<backend>.md` -- open-source scored checklist
+- `torch-ice-report/torch_readiness_research_<backend>.md` -- private backend narrative research
 - Print summary to user at the end
 
 ---
@@ -127,7 +127,7 @@ After evaluation, present a summary:
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
-║        Accelerator Readiness Report: <backend>              ║
+║        Integration Capability Report: <backend>             ║
 ╠══════════════════════════════════════════════════════════════╣
 ║                                                              ║
 ║  PYTORCH INTEGRATION                                         ║
@@ -144,7 +144,7 @@ After evaluation, present a summary:
 ║    Actual (active):      11 min                              ║
 ║                                                              ║
 ║  Report:                                                     ║
-║    torch-air-report/torch_readiness_report_<backend>.md      ║
+║    torch-ice-report/torch_readiness_report_<backend>.md      ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
 
@@ -173,4 +173,4 @@ estimate and actual-active will rarely match exactly -- that is expected.
 - Every probe must be wrapped in try/except. One failure must not stop the evaluation.
 - If the backend is only partially implemented, produce a partial report.
 - For items that cannot be checked (e.g., "CI pipeline"), mark as "Requires manual verification".
-- All output files go in `torch-air-report/` (git-ignored).
+- All output files go in `torch-ice-report/` (git-ignored).
