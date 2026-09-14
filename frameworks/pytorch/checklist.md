@@ -1,7 +1,7 @@
-# PyTorch Accelerator Integration Readiness Checklist (Unified)
+# PyTorch Integration Capability Evaluation Checklist (Unified)
 
 > A comprehensive template for evaluating hardware accelerator integration
-> readiness with PyTorch -- covers both **PrivateUse1 (out-of-tree)** and
+> capability with PyTorch -- covers both **PrivateUse1 (out-of-tree)** and
 > **Fork (in-tree/vendor fork)** integration paths.
 >
 > Items marked with **[PU1]** apply only to PrivateUse1 backends.
