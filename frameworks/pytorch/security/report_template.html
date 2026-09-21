@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<!--
+  torch-air — PyTorch Accelerator SECURITY Readiness Report (HTML template)
+  ============================================================================
+  Graphical, product-management-facing companion to
+  frameworks/pytorch/security/checklist.md. The markdown checklist is filled
+  FIRST and is the source of truth for every score/note; this template renders
+  the SAME numbers, leading with security LEVELS and REQUIRED ACTIONS.
+
+  Layout: verdict -> security levels -> required actions -> domain snapshot ->
+  (appendix) full 37-item detail. See HTML_REPORT.md for how to fill.
+
+  Markers (all written as HTML comments in the body):
+    {{TOKEN}}            -> replace in place with a scalar value
+    REPEAT:x / /REPEAT:x -> the block between a "REPEAT:x" comment and its
+                            matching "/REPEAT:x" comment is duplicated once per
+                            data row; delete both marker comments afterwards.
+  When done, remove EVERY HTML comment (this header and all inline hints) so the
+  final report contains no {{...}} tokens and no REPEAT markers.
+  Do NOT change the CSS, the scoring math, the domain IDs, or the structure.
+  The output MUST be a single self-contained .html file (no external assets).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security Readiness — {{ACCELERATOR}}</title>
+<style>
+  :root{
+    --ink:#1b1f24; --muted:#57606a; --line:#d0d7de; --bg:#f6f8fa; --card:#fff;
+    --green:#1a7f37; --amber:#bf8700; --red:#cf222e; --grey:#8b949e; --orange:#d1691a;
+    --l1:#4b2ea6; --l2:#1f6feb; --l3:#3fb950;
+    --shadow:0 1px 3px rgba(27,31,36,.08),0 1px 2px rgba(27,31,36,.06);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg)}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 20px 64px}
+  a{color:var(--l2)}
+  h2{font-size:19px;margin:0 0 14px;padding-bottom:6px;border-bottom:2px solid var(--line)}
+  section{margin:0 0 30px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;box-shadow:var(--shadow)}
+
+  header.hero{background:linear-gradient(135deg,#4b2ea6 0%,#1f6feb 55%,#3fb950 140%);color:#fff;padding:34px 0 30px;margin-bottom:24px}
+  header.hero .wrap{padding-bottom:0}
+  .hero h1{margin:0 0 4px;font-size:26px;letter-spacing:.2px}
+  .hero .sub{opacity:.92;font-size:15px}
+  .hero .tags{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
+  .tag{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.28);padding:3px 10px;border-radius:999px;font-size:12px}
+
+  .disclaimer{display:flex;gap:10px;align-items:flex-start;background:#fff8e6;border:1px solid #f5d58a;border-left:4px solid var(--amber);border-radius:8px;padding:12px 14px;margin:0 0 24px;font-size:13.5px;color:#6b5200}
+  .disclaimer b{color:#5a4500}
+
+  /* Verdict */
+  .verdict-wrap{display:flex;gap:26px;align-items:center;flex-wrap:wrap}
+  .gauge{--pct:0;--col:var(--grey);width:168px;height:168px;border-radius:50%;flex:0 0 auto;
+         background:conic-gradient(var(--col) calc(var(--pct)*1%),#e7ebef 0);
+         display:grid;place-items:center;position:relative}
+  .gauge::before{content:"";position:absolute;inset:16px;background:var(--card);border-radius:50%}
+  .gauge .val{position:relative;text-align:center}
+  .gauge .val .num{font-size:38px;font-weight:700;line-height:1}
+  .gauge .val .lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  .verdict{flex:1;min-width:260px}
+  .verdict .band{display:inline-block;font-weight:700;padding:3px 12px;border-radius:999px;color:#fff;font-size:13px}
+  .verdict .headline{font-size:18px;font-weight:700;margin:10px 0 4px}
+  .verdict p{margin:6px 0 0;color:var(--muted)}
+
+  /* Security levels */
+  .levels{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+  .lvl-card{border-radius:10px;border:1px solid var(--line);border-top:5px solid var(--grey);padding:16px;background:var(--card);box-shadow:var(--shadow)}
+  .lvl-card.l1{border-top-color:var(--l1)} .lvl-card.l2{border-top-color:var(--l2)} .lvl-card.l3{border-top-color:var(--l3)}
+  .lvl-card .lh{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .lvl-card .lh .t{font-weight:700;font-size:15px}
+  .lvl-card .lh .t .n{display:inline-block;font-size:11px;font-weight:700;color:#fff;border-radius:5px;padding:1px 7px;margin-right:6px;vertical-align:middle;background:var(--grey)}
+  .l1 .lh .t .n{background:var(--l1)} .l2 .lh .t .n{background:var(--l2)} .l3 .lh .t .n{background:var(--l3)}
+  .lvl-card .lpct{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+  .lvl-card .desc{color:var(--muted);font-size:13px;margin:6px 0 12px}
+  .lvl-dom{display:flex;align-items:center;gap:10px;margin:7px 0}
+  .lvl-dom .dn{flex:0 0 44%;font-size:13px}
+  .lvl-dom .track{flex:1;background:#e7ebef;border-radius:5px;height:10px;overflow:hidden}
+  .lvl-dom .fill{display:block;height:100%;border-radius:5px}
+  .lvl-dom .dp{flex:0 0 42px;text-align:right;font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums}
+
+  /* Required actions */
+  .actions{display:flex;flex-direction:column;gap:10px}
+  .action{display:grid;grid-template-columns:96px 1fr;gap:14px;align-items:start;border:1px solid var(--line);border-left:4px solid var(--grey);border-radius:8px;padding:12px 14px;background:var(--card)}
+  .action.critical{border-left-color:var(--red)} .action.high{border-left-color:var(--orange)} .action.medium{border-left-color:var(--amber)}
+  .action .sev{font-weight:700;text-transform:uppercase;font-size:11px;letter-spacing:.5px;color:#fff;background:var(--grey);border-radius:6px;padding:3px 8px;text-align:center;align-self:start}
+  .action.critical .sev{background:var(--red)} .action.high .sev{background:var(--orange)} .action.medium .sev{background:var(--amber)}
+  .action .txt{font-size:14px}
+  .action .refs{color:var(--muted);font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin-top:3px}
+  .none{color:var(--muted);font-size:13px}
+
+  /* Domain snapshot bars */
+  .bars{display:flex;flex-direction:column;gap:12px}
+  .bar-row{display:grid;grid-template-columns:230px 1fr 60px;gap:12px;align-items:center}
+  .bar-row .name{font-weight:600;font-size:14px}
+  .bar-row .name .lvl{display:inline-block;font-size:10px;font-weight:700;color:#fff;border-radius:4px;padding:1px 6px;margin-right:6px;vertical-align:middle}
+  .lvl.l1{background:var(--l1)} .lvl.l2{background:var(--l2)} .lvl.l3{background:var(--l3)}
+  .track{background:#e7ebef;border-radius:6px;height:16px;overflow:hidden}
+  .fill{height:100%;border-radius:6px}
+  .bar-row .pct{text-align:right;font-variant-numeric:tabular-nums;font-weight:700}
+
+  /* Appendix detail */
+  details.appendix{margin-top:8px}
+  details.appendix>summary{cursor:pointer;font-weight:600;padding:10px 0}
+  .domain{margin:14px 0 18px}
+  .domain .dh{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+  .domain .dh h3{margin:0;font-size:16px}
+  .domain .threat{color:var(--muted);font-size:13px;margin:0 0 10px}
+  .domain .dscore{font-weight:700;font-variant-numeric:tabular-nums}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);font-size:13.5px;vertical-align:top}
+  th{background:#f0f3f6;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)}
+  tr:last-child td{border-bottom:none}
+  td.id{white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+  td.prio,td.pts{text-align:center;width:1%;white-space:nowrap}
+  .badge{display:inline-block;min-width:26px;text-align:center;font-weight:700;font-size:12px;color:#fff;border-radius:6px;padding:2px 8px}
+  .p2{background:var(--green)} .p1{background:var(--amber)} .p0{background:var(--red)} .pna{background:var(--grey)}
+
+  ul.sources{font-size:13px;color:var(--muted)}
+  footer{color:var(--muted);font-size:12px;text-align:center;border-top:1px solid var(--line);padding-top:16px;margin-top:32px}
+  @media print{body{background:#fff}.card,.lvl-card,.action,table{box-shadow:none}details.appendix{}header.hero{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <h1>Security Readiness — {{ACCELERATOR}}</h1>
+    <div class="sub">PyTorch OOT accelerator security posture · torch-air v{{TORCH_AIR_VERSION}}</div>
+    <div class="tags">
+      <span class="tag">Backend: {{BACKEND_PACKAGE}}</span>
+      <span class="tag">Version: {{VERSION_EVALUATED}}</span>
+      <span class="tag">PyTorch: {{PYTORCH_VERSION}}</span>
+      <span class="tag">Deployment: {{DEPLOYMENT_MODEL}}</span>
+      <span class="tag">Generated: {{EVALUATION_DATE}}</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="disclaimer">
+    <span>⚠️</span>
+    <div><b>AI-assisted assessment from public sources only.</b> Scores reflect
+    what is publicly evidenced in source code and vendor documentation. "Not
+    evidenced" is not proof a control is absent — several items require vendor
+    confirmation. <b>Review by a qualified security engineer is required</b>
+    before this informs any deployment decision.</div>
+  </div>
+
+  <!-- ============ VERDICT ============ -->
+  <section>
+    <h2>Verdict</h2>
+    <div class="card verdict-wrap">
+      <div class="gauge" style="--pct:{{OVERALL_PCT}};--col:var(--{{OVERALL_BAND_COLOR}})">
+        <div class="val"><div class="num">{{OVERALL_PCT}}%</div><div class="lbl">Readiness</div></div>
+      </div>
+      <div class="verdict">
+        <span class="band" style="background:var(--{{OVERALL_BAND_COLOR}})">{{OVERALL_BAND_LABEL}}</span>
+        <div class="headline">{{VERDICT_HEADLINE}}</div>
+        <p>{{OVERALL_SUMMARY}}</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SECURITY LEVELS ============ -->
+  <section>
+    <h2>Security Levels</h2>
+    <div class="levels">
+      <!-- REPEAT:level  (exactly 3 cards: level 1, 2, 3) -->
+      <div class="lvl-card l{{LEVEL_NUM}}">
+        <div class="lh">
+          <span class="t"><span class="n">L{{LEVEL_NUM}}</span>{{LEVEL_NAME}}</span>
+          <span class="lpct" style="color:var(--{{LEVEL_BAND_COLOR}})">{{LEVEL_PCT}}%</span>
+        </div>
+        <p class="desc">{{LEVEL_DESC}}</p>
+        <!-- REPEAT:leveldomain  (one per domain in this level) -->
+        <div class="lvl-dom">
+          <span class="dn">{{LD_NAME}} ({{LD_ID}})</span>
+          <span class="track"><span class="fill" style="width:{{LD_PCT}}%;background:var(--{{LD_BAND_COLOR}})"></span></span>
+          <span class="dp">{{LD_PCT}}%</span>
+        </div>
+        <!-- /REPEAT:leveldomain -->
+      </div>
+      <!-- /REPEAT:level -->
+    </div>
+  </section>
+
+  <!-- ============ REQUIRED ACTIONS ============ -->
+  <section>
+    <h2>Required Actions</h2>
+    <div class="actions">
+      <!-- REPEAT:action  (prioritized; Critical first. If none, keep a single .none line instead.) -->
+      <div class="action {{ACTION_SEV_CLASS}}">
+        <span class="sev">{{ACTION_SEV}}</span>
+        <div><div class="txt">{{ACTION_TEXT}}</div><div class="refs">{{ACTION_REFS}}</div></div>
+      </div>
+      <!-- /REPEAT:action -->
+    </div>
+  </section>
+
+  <!-- ============ DOMAIN SNAPSHOT ============ -->
+  <section>
+    <h2>Domain Snapshot</h2>
+    <div class="card bars">
+      <!-- REPEAT:bar  (one per domain, level order L1->L3) -->
+      <div class="bar-row">
+        <div class="name"><span class="lvl l{{LEVEL}}">L{{LEVEL}}</span>{{DOMAIN_NAME}} ({{DOMAIN_ID}})</div>
+        <div class="track"><div class="fill" style="width:{{DOMAIN_PCT}}%;background:var(--{{DOMAIN_BAND_COLOR}})"></div></div>
+        <div class="pct">{{DOMAIN_PCT}}%</div>
+      </div>
+      <!-- /REPEAT:bar -->
+    </div>
+  </section>
+
+  <!-- ============ APPENDIX: FULL DETAIL ============ -->
+  <section>
+    <h2>Appendix — Full Checklist Detail</h2>
+    <details class="appendix">
+      <summary>Show all 37 checklist items (evidence &amp; scores)</summary>
+      <!-- REPEAT:domain  (one block per domain) -->
+      <div class="domain">
+        <div class="dh">
+          <h3><span class="lvl l{{LEVEL}}">L{{LEVEL}}</span> {{DOMAIN_ID}}: {{DOMAIN_NAME}}</h3>
+          <span class="dscore">{{DOMAIN_EARNED}}/{{DOMAIN_MAX}} · {{DOMAIN_PCT}}%</span>
+        </div>
+        <p class="threat"><b>Threat:</b> {{DOMAIN_THREAT}}</p>
+        <table>
+          <thead><tr><th>ID</th><th>Check</th><th>Prio</th><th>Pts</th><th>Notes</th></tr></thead>
+          <tbody>
+            <!-- REPEAT:item  (Pts badge: 2->p2, 1->p1, 0->p0, N/A->pna; badge text = the score) -->
+            <tr>
+              <td class="id">{{ITEM_ID}}</td>
+              <td>{{ITEM_CHECK}}</td>
+              <td class="prio">{{ITEM_PRIORITY}}</td>
+              <td class="pts"><span class="badge {{ITEM_PTS_CLASS}}">{{ITEM_PTS}}</span></td>
+              <td>{{ITEM_NOTES}}</td>
+            </tr>
+            <!-- /REPEAT:item -->
+          </tbody>
+        </table>
+      </div>
+      <!-- /REPEAT:domain -->
+    </details>
+  </section>
+
+  <!-- ============ EVIDENCE SOURCES ============ -->
+  <section>
+    <h2>Evidence Sources</h2>
+    <div class="card">
+      <ul class="sources">
+        <!-- REPEAT:source --><li>{{SOURCE_ITEM}}</li><!-- /REPEAT:source -->
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    Generated by torch-air v{{TORCH_AIR_VERSION}} · security dimension · {{MODEL}} ·
+    {{EVALUATION_DATE}}. AI-assisted from public sources; requires human
+    security-engineer review.
+  </footer>
+
+</div>
+</body>
+</html>

@@ -131,8 +131,13 @@ Create `torch-air-report/` in the current project if it doesn't exist. Write:
 |------|-------------|
 | Functional (default) | `torch-air-report/torch_readiness_report_<backend>.md` |
 | Functional (private) | `torch-air-report/torch_readiness_research_<backend>.md` |
-| `--security` | `torch-air-report/torch_security_readiness_report_<backend>.md` |
-| `--all` | Both functional and security report files above |
+| `--security` | `torch-air-report/torch_security_readiness_report_<backend>.md` (markdown) **and** `torch-air-report/torch_security_readiness_report_<backend>.html` (graphical companion) |
+| `--all` | Both functional and security report files above (security includes its `.html` companion) |
+
+Whenever a security report is produced (`--security` or `--all`), also render the
+graphical HTML companion from the completed markdown — see
+`frameworks/pytorch/security/HTML_REPORT.md`. The HTML mirrors the markdown's
+scores exactly; the markdown remains the source of truth.
 
 ---
 

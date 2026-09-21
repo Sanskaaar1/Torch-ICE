@@ -168,3 +168,22 @@ Additionally, classify gaps for the Gap Analysis section:
 | Inter-device | Protected PCIe (PPCIE) for multi-GPU |
 
 Use this as the maturity benchmark. Quantify how far below parity the accelerator is and what the path to parity looks like.
+
+---
+
+### Phase 5: Graphical HTML Report
+
+After the markdown security report is complete, render a graphical HTML
+companion so security levels and required actions are legible to non-technical
+stakeholders (product, leadership).
+
+- Follow `frameworks/pytorch/security/HTML_REPORT.md`.
+- Copy `frameworks/pytorch/security/report_template.html` to
+  `torch-air-report/torch_security_readiness_report_<backend>.html`.
+- The markdown report is the **source of truth** — every score, band, and note
+  in the HTML must match it exactly. Do not recompute or invent values here.
+- The output must be a single self-contained `.html` file (styling is inline;
+  no external assets or scripts).
+
+A complete rendered reference is at
+`examples/torch_security_readiness_report_example.html`.

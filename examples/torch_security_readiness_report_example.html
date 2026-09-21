@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security Readiness — IBM Spyre AIU</title>
+<style>
+  :root{
+    --ink:#1b1f24; --muted:#57606a; --line:#d0d7de; --bg:#f6f8fa; --card:#fff;
+    --green:#1a7f37; --amber:#bf8700; --red:#cf222e; --grey:#8b949e; --orange:#d1691a;
+    --l1:#4b2ea6; --l2:#1f6feb; --l3:#3fb950;
+    --shadow:0 1px 3px rgba(27,31,36,.08),0 1px 2px rgba(27,31,36,.06);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg)}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 20px 64px}
+  a{color:var(--l2)}
+  h2{font-size:19px;margin:0 0 14px;padding-bottom:6px;border-bottom:2px solid var(--line)}
+  section{margin:0 0 30px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;box-shadow:var(--shadow)}
+
+  header.hero{background:linear-gradient(135deg,#4b2ea6 0%,#1f6feb 55%,#3fb950 140%);color:#fff;padding:34px 0 30px;margin-bottom:24px}
+  header.hero .wrap{padding-bottom:0}
+  .hero h1{margin:0 0 4px;font-size:26px;letter-spacing:.2px}
+  .hero .sub{opacity:.92;font-size:15px}
+  .hero .tags{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
+  .tag{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.28);padding:3px 10px;border-radius:999px;font-size:12px}
+
+  .disclaimer{display:flex;gap:10px;align-items:flex-start;background:#fff8e6;border:1px solid #f5d58a;border-left:4px solid var(--amber);border-radius:8px;padding:12px 14px;margin:0 0 24px;font-size:13.5px;color:#6b5200}
+  .disclaimer b{color:#5a4500}
+
+  /* Verdict */
+  .verdict-wrap{display:flex;gap:26px;align-items:center;flex-wrap:wrap}
+  .gauge{--pct:0;--col:var(--grey);width:168px;height:168px;border-radius:50%;flex:0 0 auto;
+         background:conic-gradient(var(--col) calc(var(--pct)*1%),#e7ebef 0);
+         display:grid;place-items:center;position:relative}
+  .gauge::before{content:"";position:absolute;inset:16px;background:var(--card);border-radius:50%}
+  .gauge .val{position:relative;text-align:center}
+  .gauge .val .num{font-size:38px;font-weight:700;line-height:1}
+  .gauge .val .lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  .verdict{flex:1;min-width:260px}
+  .verdict .band{display:inline-block;font-weight:700;padding:3px 12px;border-radius:999px;color:#fff;font-size:13px}
+  .verdict .headline{font-size:18px;font-weight:700;margin:10px 0 4px}
+  .verdict p{margin:6px 0 0;color:var(--muted)}
+
+  /* Security levels */
+  .levels{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+  .lvl-card{border-radius:10px;border:1px solid var(--line);border-top:5px solid var(--grey);padding:16px;background:var(--card);box-shadow:var(--shadow)}
+  .lvl-card.l1{border-top-color:var(--l1)} .lvl-card.l2{border-top-color:var(--l2)} .lvl-card.l3{border-top-color:var(--l3)}
+  .lvl-card .lh{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .lvl-card .lh .t{font-weight:700;font-size:15px}
+  .lvl-card .lh .t .n{display:inline-block;font-size:11px;font-weight:700;color:#fff;border-radius:5px;padding:1px 7px;margin-right:6px;vertical-align:middle;background:var(--grey)}
+  .l1 .lh .t .n{background:var(--l1)} .l2 .lh .t .n{background:var(--l2)} .l3 .lh .t .n{background:var(--l3)}
+  .lvl-card .lpct{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+  .lvl-card .desc{color:var(--muted);font-size:13px;margin:6px 0 12px}
+  .lvl-dom{display:flex;align-items:center;gap:10px;margin:7px 0}
+  .lvl-dom .dn{flex:0 0 44%;font-size:13px}
+  .lvl-dom .track{flex:1;background:#e7ebef;border-radius:5px;height:10px;overflow:hidden}
+  .lvl-dom .fill{display:block;height:100%;border-radius:5px}
+  .lvl-dom .dp{flex:0 0 42px;text-align:right;font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums}
+
+  /* Required actions */
+  .actions{display:flex;flex-direction:column;gap:10px}
+  .action{display:grid;grid-template-columns:96px 1fr;gap:14px;align-items:start;border:1px solid var(--line);border-left:4px solid var(--grey);border-radius:8px;padding:12px 14px;background:var(--card)}
+  .action.critical{border-left-color:var(--red)} .action.high{border-left-color:var(--orange)} .action.medium{border-left-color:var(--amber)}
+  .action .sev{font-weight:700;text-transform:uppercase;font-size:11px;letter-spacing:.5px;color:#fff;background:var(--grey);border-radius:6px;padding:3px 8px;text-align:center;align-self:start}
+  .action.critical .sev{background:var(--red)} .action.high .sev{background:var(--orange)} .action.medium .sev{background:var(--amber)}
+  .action .txt{font-size:14px}
+  .action .refs{color:var(--muted);font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin-top:3px}
+  .none{color:var(--muted);font-size:13px}
+
+  /* Domain snapshot bars */
+  .bars{display:flex;flex-direction:column;gap:12px}
+  .bar-row{display:grid;grid-template-columns:230px 1fr 60px;gap:12px;align-items:center}
+  .bar-row .name{font-weight:600;font-size:14px}
+  .bar-row .name .lvl{display:inline-block;font-size:10px;font-weight:700;color:#fff;border-radius:4px;padding:1px 6px;margin-right:6px;vertical-align:middle}
+  .lvl.l1{background:var(--l1)} .lvl.l2{background:var(--l2)} .lvl.l3{background:var(--l3)}
+  .track{background:#e7ebef;border-radius:6px;height:16px;overflow:hidden}
+  .fill{height:100%;border-radius:6px}
+  .bar-row .pct{text-align:right;font-variant-numeric:tabular-nums;font-weight:700}
+
+  /* Appendix detail */
+  details.appendix{margin-top:8px}
+  details.appendix>summary{cursor:pointer;font-weight:600;padding:10px 0}
+  .domain{margin:14px 0 18px}
+  .domain .dh{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+  .domain .dh h3{margin:0;font-size:16px}
+  .domain .threat{color:var(--muted);font-size:13px;margin:0 0 10px}
+  .domain .dscore{font-weight:700;font-variant-numeric:tabular-nums}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);font-size:13.5px;vertical-align:top}
+  th{background:#f0f3f6;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)}
+  tr:last-child td{border-bottom:none}
+  td.id{white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+  td.prio,td.pts{text-align:center;width:1%;white-space:nowrap}
+  .badge{display:inline-block;min-width:26px;text-align:center;font-weight:700;font-size:12px;color:#fff;border-radius:6px;padding:2px 8px}
+  .p2{background:var(--green)} .p1{background:var(--amber)} .p0{background:var(--red)} .pna{background:var(--grey)}
+
+  ul.sources{font-size:13px;color:var(--muted)}
+  footer{color:var(--muted);font-size:12px;text-align:center;border-top:1px solid var(--line);padding-top:16px;margin-top:32px}
+  @media print{body{background:#fff}.card,.lvl-card,.action,table{box-shadow:none}details.appendix{}header.hero{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <h1>Security Readiness — IBM Spyre AIU</h1>
+    <div class="sub">PyTorch OOT accelerator security posture · torch-air v0.2.0</div>
+    <div class="tags">
+      <span class="tag">Backend: torch_spyre</span>
+      <span class="tag">Version: 0.0.1 (HEAD 2026-09-21)</span>
+      <span class="tag">PyTorch: 2.13.0</span>
+      <span class="tag">Deployment: on-prem enterprise; multi-tenant via LPAR + SR-IOV</span>
+      <span class="tag">Generated: 2026-09-21</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="disclaimer">
+    <span>⚠️</span>
+    <div><b>AI-assisted assessment from public sources only.</b> Scores reflect
+    what is publicly evidenced in source code and vendor documentation. "Not
+    evidenced" is not proof a control is absent — several items require vendor
+    confirmation. <b>Review by a qualified security engineer is required</b>
+    before this informs any deployment decision.</div>
+  </div>
+
+  
+  <section>
+    <h2>Verdict</h2>
+    <div class="card verdict-wrap">
+      <div class="gauge" style="--pct:9;--col:var(--red)">
+        <div class="val"><div class="num">9%</div><div class="lbl">Readiness</div></div>
+      </div>
+      <div class="verdict">
+        <span class="band" style="background:var(--red)">Not deployment-ready</span>
+        <div class="headline">Not deployment-ready on public evidence — vendor confirmation required for all Level-1 controls</div>
+        <p>torch-spyre shows solid software hygiene at the PyTorch boundary — strong dispatch-boundary input validation and defensive C++ checks — but almost all hardware and firmware controls (tenant isolation, memory encryption, data scrubbing, secure boot) are proprietary and not publicly documented, so they score 0 pending vendor confirmation. This reflects publicly evidenced posture, not confirmed absence. Single-tenant use on IBM Z / LinuxONE Secure Execution is the currently supportable path.</p>
+      </div>
+    </div>
+  </section>
+
+  
+  <section>
+    <h2>Security Levels</h2>
+    <div class="levels">
+      
+      <div class="lvl-card l1">
+        <div class="lh">
+          <span class="t"><span class="n">L1</span>Foundational</span>
+          <span class="lpct" style="color:var(--red)">5%</span>
+        </div>
+        <p class="desc">Tenant isolation, device-memory encryption, and data scrubbing. Highest weight — unmet Level 1 controls block safe multi-tenant deployment.</p>
+        
+        <div class="lvl-dom">
+          <span class="dn">Multi-Tenant Isolation (SEC-MT)</span>
+          <span class="track"><span class="fill" style="width:15%;background:var(--red)"></span></span>
+          <span class="dp">15%</span>
+        </div>
+        
+        <div class="lvl-dom">
+          <span class="dn">Device Memory Encryption (SEC-ME)</span>
+          <span class="track"><span class="fill" style="width:0%;background:var(--red)"></span></span>
+          <span class="dp">0%</span>
+        </div>
+        
+        <div class="lvl-dom">
+          <span class="dn">Data Scrubbing (SEC-DS)</span>
+          <span class="track"><span class="fill" style="width:0%;background:var(--red)"></span></span>
+          <span class="dp">0%</span>
+        </div>
+        
+      </div>
+      
+      <div class="lvl-card l2">
+        <div class="lh">
+          <span class="t"><span class="n">L2</span>Production</span>
+          <span class="lpct" style="color:var(--red)">14%</span>
+        </div>
+        <p class="desc">Firmware/driver integrity and host-device transit protection. Expected before production use.</p>
+        
+        <div class="lvl-dom">
+          <span class="dn">Host-Device Transit Security (SEC-HT)</span>
+          <span class="track"><span class="fill" style="width:11%;background:var(--red)"></span></span>
+          <span class="dp">11%</span>
+        </div>
+        
+        <div class="lvl-dom">
+          <span class="dn">Firmware & Driver (SEC-FD)</span>
+          <span class="track"><span class="fill" style="width:16%;background:var(--red)"></span></span>
+          <span class="dp">16%</span>
+        </div>
+        
+      </div>
+      
+      <div class="lvl-card l3">
+        <div class="lh">
+          <span class="t"><span class="n">L3</span>Integration</span>
+          <span class="lpct" style="color:var(--red)">31%</span>
+        </div>
+        <p class="desc">PyTorch integration surface: security testing, input validation, and safe error handling.</p>
+        
+        <div class="lvl-dom">
+          <span class="dn">PyTorch Integration Surface (SEC-PI)</span>
+          <span class="track"><span class="fill" style="width:31%;background:var(--red)"></span></span>
+          <span class="dp">31%</span>
+        </div>
+        
+      </div>
+      
+    </div>
+  </section>
+
+  
+  <section>
+    <h2>Required Actions</h2>
+    <div class="actions">
+      
+      <div class="action critical">
+        <span class="sev">Critical</span>
+        <div><div class="txt">Obtain IBM vendor confirmation of Level-1 controls before any shared/multi-tenant deployment: cross-tenant memory isolation, at-rest device-memory encryption, key management, and inter-session data/KV-cache scrubbing. None are publicly documented today.</div><div class="refs">SEC-MT-02, SEC-MT-04, SEC-ME-01, SEC-ME-02, SEC-ME-03, SEC-DS-01, SEC-DS-02</div></div>
+      </div>
+      
+      <div class="action critical">
+        <span class="sev">Critical</span>
+        <div><div class="txt">Until confirmed, treat single-tenant, dedicated-host deployment on IBM Z / LinuxONE Secure Execution as the only currently-supportable configuration — confidential-computing guarantees come from the host platform, not the accelerator die.</div><div class="refs">SEC-ME-05, SEC-MT-05</div></div>
+      </div>
+      
+      <div class="action high">
+        <span class="sev">High</span>
+        <div><div class="txt">Add a SECURITY.md and a vulnerability-disclosure process to the backend repository (none present).</div><div class="refs">SEC-FD-05</div></div>
+      </div>
+      
+      <div class="action high">
+        <span class="sev">High</span>
+        <div><div class="txt">Add SAST and memory-leak detection to CI (CodeQL/clang-tidy/semgrep + ASan/LSan). CI currently runs style/type linters only.</div><div class="refs">SEC-PI-03, SEC-PI-02</div></div>
+      </div>
+      
+      <div class="action high">
+        <span class="sev">High</span>
+        <div><div class="txt">Confirm host-device transit protections with the vendor: PCIe link encryption, IOMMU host-buffer protection, and channel attestation.</div><div class="refs">SEC-HT-01, SEC-HT-02, SEC-HT-06</div></div>
+      </div>
+      
+      <div class="action high">
+        <span class="sev">High</span>
+        <div><div class="txt">Confirm Spyre-card firmware secure boot, authenticated updates, and anti-rollback.</div><div class="refs">SEC-FD-01, SEC-FD-02, SEC-FD-03</div></div>
+      </div>
+      
+      <div class="action medium">
+        <span class="sev">Medium</span>
+        <div><div class="txt">Sanitize exception text surfaced via e.what() in kernel preparation so parsed file content is not echoed in error messages.</div><div class="refs">SEC-PI-06</div></div>
+      </div>
+      
+    </div>
+  </section>
+
+  
+  <section>
+    <h2>Domain Snapshot</h2>
+    <div class="card bars">
+      
+      <div class="bar-row">
+        <div class="name"><span class="lvl l1">L1</span>Multi-Tenant Isolation (SEC-MT)</div>
+        <div class="track"><div class="fill" style="width:15%;background:var(--red)"></div></div>
+        <div class="pct">15%</div>
+      </div>
+      
+      <div class="bar-row">
+        <div class="name"><span class="lvl l1">L1</span>Device Memory Encryption (SEC-ME)</div>
+        <div class="track"><div class="fill" style="width:0%;background:var(--red)"></div></div>
+        <div class="pct">0%</div>
+      </div>
+      
+      <div class="bar-row">
+        <div class="name"><span class="lvl l1">L1</span>Data Scrubbing (SEC-DS)</div>
+        <div class="track"><div class="fill" style="width:0%;background:var(--red)"></div></div>
+        <div class="pct">0%</div>
+      </div>
+      
+      <div class="bar-row">
+        <div class="name"><span class="lvl l2">L2</span>Host-Device Transit Security (SEC-HT)</div>
+        <div class="track"><div class="fill" style="width:11%;background:var(--red)"></div></div>
+        <div class="pct">11%</div>
+      </div>
+      
+      <div class="bar-row">
+        <div class="name"><span class="lvl l2">L2</span>Firmware & Driver (SEC-FD)</div>
+        <div class="track"><div class="fill" style="width:16%;background:var(--red)"></div></div>
+        <div class="pct">16%</div>
+      </div>
+      
+      <div class="bar-row">
+        <div class="name"><span class="lvl l3">L3</span>PyTorch Integration Surface (SEC-PI)</div>
+        <div class="track"><div class="fill" style="width:31%;background:var(--red)"></div></div>
+        <div class="pct">31%</div>
+      </div>
+      
+    </div>
+  </section>
+
+  
+  <section>
+    <h2>Appendix — Full Checklist Detail</h2>
+    <details class="appendix">
+      <summary>Show all 37 checklist items (evidence &amp; scores)</summary>
+      
+      <div class="domain">
+        <div class="dh">
+          <h3><span class="lvl l1">L1</span> SEC-MT: Multi-Tenant Isolation</h3>
+          <span class="dscore">2/12 · 15%</span>
+        </div>
+        <p class="threat"><b>Threat:</b> Cross-tenant data leakage, compute interference, side-channel attacks.</p>
+        <table>
+          <thead><tr><th>ID</th><th>Check</th><th>Prio</th><th>Pts</th><th>Notes</th></tr></thead>
+          <tbody>
+            
+            <tr>
+              <td class="id">SEC-MT-01</td>
+              <td>Hardware-level partitioning support</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p1">1</span></td>
+              <td>&#x27;Hardware-level security isolation&#x27; cited as a design priority; PCIe PF/VF partitioning with a VF multi-tenant mode. On-die partitioning not detailed. (docs how_torch_spyre_works.md:50; runtime/index.md:149)</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-MT-02</td>
+              <td>Memory isolation between tenants (SMMU/IOMMU)</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-MT-03</td>
+              <td>Compute isolation (dedicated execution units)</td>
+              <td class="prio">2</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-MT-04</td>
+              <td>Temporal isolation (memory scrubbing on tenant switch)</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation; no scrub-on-switch logic in the bridge either.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-MT-05</td>
+              <td>Fault isolation (crash containment)</td>
+              <td class="prio">2</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation; platform LPAR/SSC isolation is host-level, not device-documented.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-MT-06</td>
+              <td>Resource allocation granularity</td>
+              <td class="prio">3</td>
+              <td class="pts"><span class="badge p1">1</span></td>
+              <td>Resource granularity: 2 VFs/card + FLEX_DEVICE PF/VF/MOCK modes; coarse (per-card), not per-context. (runtime/index.md:149; csrc/spyre_device_enum.cpp)</td>
+            </tr>
+            
+          </tbody>
+        </table>
+      </div>
+      
+      <div class="domain">
+        <div class="dh">
+          <h3><span class="lvl l1">L1</span> SEC-ME: Device Memory Encryption</h3>
+          <span class="dscore">0/10 · 0%</span>
+        </div>
+        <p class="threat"><b>Threat:</b> Physical access attacks, host compromise, model IP theft, regulatory non-compliance.</p>
+        <table>
+          <thead><tr><th>ID</th><th>Check</th><th>Prio</th><th>Pts</th><th>Notes</th></tr></thead>
+          <tbody>
+            
+            <tr>
+              <td class="id">SEC-ME-01</td>
+              <td>At-rest encryption of device memory</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-ME-02</td>
+              <td>Hardware Root of Trust present</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-ME-03</td>
+              <td>Key management (on-device vs host-provided)</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-ME-04</td>
+              <td>Encrypted regions documented (full/partial)</td>
+              <td class="prio">2</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-ME-05</td>
+              <td>Runtime data-in-use protection</td>
+              <td class="prio">2</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation; data-in-use protection is delivered by host Secure Execution, not documented on the device die.</td>
+            </tr>
+            
+          </tbody>
+        </table>
+      </div>
+      
+      <div class="domain">
+        <div class="dh">
+          <h3><span class="lvl l1">L1</span> SEC-DS: Data Scrubbing</h3>
+          <span class="dscore">0/10 · 0%</span>
+        </div>
+        <p class="threat"><b>Threat:</b> Memory residue between sessions leaking KV cache, model fragments, or activations.</p>
+        <table>
+          <thead><tr><th>ID</th><th>Check</th><th>Prio</th><th>Pts</th><th>Notes</th></tr></thead>
+          <tbody>
+            
+            <tr>
+              <td class="id">SEC-DS-01</td>
+              <td>Memory zeroing between workload transitions</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not implemented in the bridge: no memory zeroing/scrub in SpyreAllocator/spyre_mem (grep of csrc); undocumented at hardware level.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-DS-02</td>
+              <td>KV cache clearing between sessions (LLM)</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation; no KV-cache clearing logic in the repo.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-DS-03</td>
+              <td>Intermediate result cleanup</td>
+              <td class="prio">2</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-DS-04</td>
+              <td>Scrubbing verification mechanism</td>
+              <td class="prio">2</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-DS-05</td>
+              <td>Data minimization in transfer (encryption preferred)</td>
+              <td class="prio">3</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation.</td>
+            </tr>
+            
+          </tbody>
+        </table>
+      </div>
+      
+      <div class="domain">
+        <div class="dh">
+          <h3><span class="lvl l2">L2</span> SEC-HT: Host-Device Transit Security</h3>
+          <span class="dscore">1/12 · 11%</span>
+        </div>
+        <p class="threat"><b>Threat:</b> PCIe bus snooping, DMA attacks, host buffer exposure, inter-device interception.</p>
+        <table>
+          <thead><tr><th>ID</th><th>Check</th><th>Prio</th><th>Pts</th><th>Notes</th></tr></thead>
+          <tbody>
+            
+            <tr>
+              <td class="id">SEC-HT-01</td>
+              <td>PCIe link encryption (AES-GCM or equivalent)</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-HT-02</td>
+              <td>Host buffer protection (IOMMU/SMMU)</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation; SR-IOV VFs imply IOMMU DMA isolation but host-buffer protection is not documented.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-HT-03</td>
+              <td>PII-aware data handling in transfer path</td>
+              <td class="prio">2</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-HT-04</td>
+              <td>Device buffer access control</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p1">1</span></td>
+              <td>Device buffers wrapped in SharedOwnerCtx without exposing raw pointers (&#x27;an IBM Z security requirement&#x27;). (glossary.md:64; how_torch_spyre_works.md:138,775)</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-HT-05</td>
+              <td>Inter-device communication encryption</td>
+              <td class="prio">2</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation; the spyre_ccl distributed path shows no link encryption.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-HT-06</td>
+              <td>Channel attestation (SPDM or equivalent)</td>
+              <td class="prio">2</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation; SPDM appears only in generic firmware standards, not Spyre docs.</td>
+            </tr>
+            
+          </tbody>
+        </table>
+      </div>
+      
+      <div class="domain">
+        <div class="dh">
+          <h3><span class="lvl l2">L2</span> SEC-FD: Firmware & Driver</h3>
+          <span class="dscore">3/16 · 16%</span>
+        </div>
+        <p class="threat"><b>Threat:</b> Firmware compromise, driver vulnerabilities, kernel-level host compromise.</p>
+        <table>
+          <thead><tr><th>ID</th><th>Check</th><th>Prio</th><th>Pts</th><th>Notes</th></tr></thead>
+          <tbody>
+            
+            <tr>
+              <td class="id">SEC-FD-01</td>
+              <td>Secure boot (signed firmware verification)</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation; IBM Z platform secure boot exists, but Spyre-card firmware secure boot is not documented.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-FD-02</td>
+              <td>Authenticated firmware updates</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-FD-03</td>
+              <td>Anti-rollback protection</td>
+              <td class="prio">2</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-FD-04</td>
+              <td>Memory safety (no CWE-119/122/190/401/680)</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p1">1</span></td>
+              <td>Defensive C++: extensive bounds/null/size checks via TORCH_CHECK (spyre_mem.cpp:268-335), RAII ownership. Caveat: no ASan/UBSan/SAST in CI to verify absence of memory-safety CWEs.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-FD-05</td>
+              <td>Vulnerability disclosure process</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not implemented: no SECURITY.md in the repo; no vulnerability-disclosure process documented.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-FD-06</td>
+              <td>DoS resistance (resource limits)</td>
+              <td class="prio">2</td>
+              <td class="pts"><span class="badge p1">1</span></td>
+              <td>Partial: FlexAllocator memory-pressure callback with retry (spyre_allocator.cpp:48,227). No broader rate/resource limits documented.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-FD-07</td>
+              <td>Documentation-code consistency</td>
+              <td class="prio">3</td>
+              <td class="pts"><span class="badge p1">1</span></td>
+              <td>Docs accurately reference real code (spyre_device_enum.cpp, REGISTER_ALLOCATOR); observed doc-code consistency.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-FD-08</td>
+              <td>Network surface minimization</td>
+              <td class="prio">2</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Undocumented: the core bridge exposes no network sockets, but a telemetry extension adds ClickHouse network egress; no stated network-surface-minimization practice.</td>
+            </tr>
+            
+          </tbody>
+        </table>
+      </div>
+      
+      <div class="domain">
+        <div class="dh">
+          <h3><span class="lvl l3">L3</span> SEC-PI: PyTorch Integration Surface</h3>
+          <span class="dscore">4/14 · 31%</span>
+        </div>
+        <p class="threat"><b>Threat:</b> Memory corruption at the PyTorch/device trust boundary, information leakage, supply chain compromise.</p>
+        <table>
+          <thead><tr><th>ID</th><th>Check</th><th>Prio</th><th>Pts</th><th>Notes</th></tr></thead>
+          <tbody>
+            
+            <tr>
+              <td class="id">SEC-PI-01</td>
+              <td>OOT test coverage for security-relevant paths</td>
+              <td class="prio">2</td>
+              <td class="pts"><span class="badge p1">1</span></td>
+              <td>OOT test framework (tests/oot_framework/) covers allocator/device-enum/streams, but no tests target isolation/scrub/encryption specifically.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-PI-02</td>
+              <td>Memory leak detection in CI</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not implemented: no valgrind/ASan/LeakSanitizer job in CI.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-PI-03</td>
+              <td>SAST on bridge code (C++/Python)</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not implemented: CI runs style/type linters only (ruff, clang-format, cpplint, mypy); no CodeQL/semgrep/clang-tidy/sanitizers.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-PI-04</td>
+              <td>Security issue attribution (device vs PyTorch)</td>
+              <td class="prio">2</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Undocumented: CODEOWNERS exists but there is no device-vs-PyTorch security-issue attribution mechanism.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-PI-05</td>
+              <td>Input validation at dispatch boundary</td>
+              <td class="prio">1</td>
+              <td class="pts"><span class="badge p2">2</span></td>
+              <td>Strong dispatch-boundary validation: ~180 TORCH_CHECK on shapes/strides/sizes (e.g. spyre_mem.cpp:268-335).</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-PI-06</td>
+              <td>Error handling without information leakage</td>
+              <td class="prio">2</td>
+              <td class="pts"><span class="badge p1">1</span></td>
+              <td>No pointer-address/backtrace leakage found in error paths (grep). Caveat: errors echo exception text via e.what() (prepare_kernel.cpp:238,623) — minor info-exposure.</td>
+            </tr>
+            
+            <tr>
+              <td class="id">SEC-PI-07</td>
+              <td>CRCR security test integration</td>
+              <td class="prio">3</td>
+              <td class="pts"><span class="badge p0">0</span></td>
+              <td>Not found in public sources — requires vendor confirmation; no CRCR security-test integration evidenced.</td>
+            </tr>
+            
+          </tbody>
+        </table>
+      </div>
+      
+    </details>
+  </section>
+
+  
+  <section>
+    <h2>Evidence Sources</h2>
+    <div class="card">
+      <ul class="sources">
+        <li>Repo <a href="https://github.com/torch-spyre/torch-spyre">github.com/torch-spyre/torch-spyre</a> — csrc/spyre_allocator.cpp (:48,227), csrc/spyre_mem.cpp (:268-335), csrc/prepare_kernel.cpp (:238,623), tests/oot_framework/, tests/test_allocator_e2e.py, .pre-commit-config.yaml, .github/workflows/linters.yaml, pyproject.toml:13, setup.py:27, version.py, docs/source/getting_started/how_torch_spyre_works.md (:50,138,775), docs/source/runtime/index.md:149. No SECURITY.md, no CodeQL/sanitizer/valgrind config found.</li><li>IBM Research — Spyre for Z: <a href="https://research.ibm.com/blog/spyre-for-z">research.ibm.com/blog/spyre-for-z</a></li><li>IBM Research — Lifting the cover on the IBM Spyre Accelerator</li><li>StorageReview — IBM Spyre Accelerator overview</li><li>IBM — Spyre Accelerator for Z and LinuxONE: <a href="https://ibm.com/support/z-content-solutions/spyre-accelerator-z-and-linuxone/">ibm.com/support/z-content-solutions/spyre-accelerator-z-and-linuxone/</a></li><li>IBM Secure Execution for Linux (<a href="https://public.dhe.ibm.com/software/dw/linux390/docu/l151se00.pdf">public.dhe.ibm.com/software/dw/linux390/docu/l151se00.pdf</a>)</li><li>IBM — Confidential computing: <a href="https://ibm.com/solutions/confidential-computing">ibm.com/solutions/confidential-computing</a></li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    Generated by torch-air v0.2.0 · security dimension · claude-opus-4-8 ·
+    2026-09-21. AI-assisted from public sources; requires human
+    security-engineer review.
+  </footer>
+
+</div>
+</body>
+</html>
