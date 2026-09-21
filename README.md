@@ -1,9 +1,9 @@
-# Torch Accelerator Integration Readiness (AIR)
+# Torch: Integration Capability Evaluation (ICE)
 
 A checklist-based evaluation tool that measures how well a hardware accelerator integrates with PyTorch. It probes source code for device registration, operator coverage, memory management, distributed training, profiling, and more — then produces a scored readiness report.
 
 ## Workflow Process Outline:
-- Skill Execution & PR Submission: The accelerator backend executes the skill and submits the comprehensive readiness report as a Pull Request (PR) to PyTorch-AIR repo.
+- Skill Execution & PR Submission: The accelerator backend executes the skill and submits the comprehensive readiness report as a Pull Request (PR) to the PyTorch-ICE repo.
 - Engineering Review: A partner engineering discussion is held to review the overall readiness report and identify target features.
 - Task Assignment & Collaboration: Tasks are assigned based on priority, workload capacity, complexity, and upstream engagement, with both partners collaborating as authors and co-authors on the respective PRs.
 - Issue Creation: Red Hat files the identified issues within the PyTorch GitHub repository.
@@ -13,7 +13,7 @@ Downstream Code Optimization: Following the successful merging of PRs, the partn
 
 ## What It Does
 
-Given a backend name, source path, or GitHub URL, AIR:
+Given a backend name, source path, or GitHub URL, ICE:
 
 1. Locates the backend source code (local, pip, or GitHub)
 2. Detects the integration path (PrivateUse1 or Fork)
@@ -24,26 +24,26 @@ Given a backend name, source path, or GitHub URL, AIR:
 
 ## Installation
 
-AIR is distributed as a Claude Code plugin through its own marketplace. Install it
+ICE is distributed as a Claude Code plugin through its own marketplace. Install it
 from within Claude Code:
 
 1. **Add the marketplace** (GitHub `owner/repo` shorthand):
 
    ```
-   /plugin marketplace add TorchedHat/torch-air
+   /plugin marketplace add TorchedHat/torch-ice
    ```
 
 2. **Install the plugin** (`plugin-name@marketplace-name`):
 
    ```
-   /plugin install torch-air@torch-air
+   /plugin install torch-ice@torch-ice
    ```
 
    Claude Code then prompts for an install scope: **user** (all projects),
    **project** (shared via `.claude/settings.json`), or **local** (this repo only).
 
 Alternatively, run `/plugin` to open the interactive plugin manager and install
-`torch-air` from the **Discover** tab.
+`torch-ice` from the **Discover** tab.
 
 ### Install via settings.json
 
@@ -53,12 +53,12 @@ For team or project setups, declare the marketplace and plugin in
 ```json
 {
   "extraKnownMarketplaces": {
-    "torch-air": {
-      "source": { "source": "github", "repo": "TorchedHat/torch-air" }
+    "torch-ice": {
+      "source": { "source": "github", "repo": "TorchedHat/torch-ice" }
     }
   },
   "enabledPlugins": {
-    "torch-air@torch-air": true
+    "torch-ice@torch-ice": true
   }
 }
 ```
@@ -68,15 +68,15 @@ For team or project setups, declare the marketplace and plugin in
 Once installed, invoke the skill (namespaced by the plugin):
 
 ```
-/torch-air:torch-accelerator-readiness <backend>
+/torch-ice:torch-integration-capability-evaluation <backend>
 ```
 
 Examples:
 
 ```
-/torch-air:torch-accelerator-readiness <accelerator-name>
-/torch-air:torch-accelerator-readiness /path/to/backend/source
-/torch-air:torch-accelerator-readiness https://github.com/org/torch-backend
+/torch-ice:torch-integration-capability-evaluation <accelerator-name>
+/torch-ice:torch-integration-capability-evaluation /path/to/backend/source
+/torch-ice:torch-integration-capability-evaluation https://github.com/org/torch-backend
 ```
 
 ## Report Structure
@@ -184,16 +184,16 @@ Tier 1 covers foundational integration (device registration, operators, memory).
 
 ## Output
 
-Reports are written to `torch-air-report/`:
+Reports are written to `torch-ice-report/`:
 
 ```
-torch-air-report/torch_readiness_report_<backend>.md
+torch-ice-report/torch_readiness_report_<backend>.md
 ```
 
 ## Repository Structure
 
 ```
-torch-air/
+torch-ice/
 ├── SKILL.md                          # Orchestrator: input parsing, dispatch, scoring, summary
 ├── frameworks/
 │   ├── pytorch/

@@ -1,9 +1,9 @@
-## Part 1: PyTorch Readiness Evaluation
+## Part 1: PyTorch Integration Capability Evaluation
 
 ### Templates
 
 Read `frameworks/pytorch/checklist.md`.
-Copy it to `torch-air-report/torch_readiness_report_<backend>.md` as your working copy.
+Copy it to `torch-ice-report/torch_readiness_report_<backend>.md` as your working copy.
 
 ### Pre-Phase: Checklist Refinement via TorchTalk
 
