@@ -285,7 +285,7 @@ the last posted review, skip posting and tell the user nothing changed.
 
 ## Output Files
 
-- `torch-air-report/architecture_review_pr<number>.md` (or
+- `torch-ice-report/architecture_review_pr<number>.md` (or
   `..._<branch-name>.md` for branch mode) — the rendered review, git-ignored
 - Printed summary to the user
 
