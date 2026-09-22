@@ -8,7 +8,9 @@ const HISTORY_MAX_ITEMS = 30;
 const HISTORY_MAX_CHARS = 24_000;
 const DIFF_MAX_CHARS = 120_000;
 const COMMAND_MAX_CHARS = 2_000;
+const PR_TITLE_MAX_CHARS = 2_000;
 const PR_BODY_MAX_CHARS = 8_000;
+const METADATA_MAX_CHARS = PR_TITLE_MAX_CHARS + PR_BODY_MAX_CHARS + 256;
 const FILES_MAX_CHARS = 8_000;
 const FILE_CONTEXT_MAX_CHARS = 12_000;
 const EXPLORATION_MAX_CALLS = 6;
@@ -121,26 +123,33 @@ export function redactSensitiveText(value) {
 export function sanitizeReviewOutput(value) {
   const output = String(value ?? '').trim()
     .replace(/<!--\s*torch-ice-review-agent:[\s\S]*?-->/gi, '')
-    .replace(/!\[[^\]]*\]\([^\s)]+\)/g, '[external image omitted]')
+    .replace(/<picture\b[^>]*>[\s\S]*?<\/picture>/gi, '[external image omitted]')
+    .replace(/<img\b[^>]*>/gi, '[external image omitted]')
+    .replace(/!\[[^\]]*\][ \t]*(?:\([^\r\n)]*\)|\[[^\r\n\]]*\])?/g, '[external image omitted]')
     .replace(/@(?=[A-Za-z0-9-]{1,39}\b)/g, '@\u200B')
     .trim();
   if (output.length > OUTPUT_MAX_CHARS) throw new Error('OpenAI returned review text that exceeded the safe output limit.');
   return output;
 }
 
+function escapeUntrustedSection(value) {
+  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 export function buildReviewInput({ commandPrompt, pr, headSha, files, fileContext = '', diff, history, checklist, reviewMode = 'general' }) {
   const raw = {
     command: String(commandPrompt ?? '') || '(No additional prompt.)',
-    metadata: JSON.stringify({ number: pr.number, title: truncate(pr.title, 2_000), body: truncate(pr.body, PR_BODY_MAX_CHARS), head_sha: headSha }),
+    metadata: JSON.stringify({ number: pr.number, title: truncate(pr.title, PR_TITLE_MAX_CHARS), body: truncate(pr.body, PR_BODY_MAX_CHARS), head_sha: headSha }),
     files: files.map((file) => `${file.filename} (+${file.additions}/-${file.deletions})`).join('\n'),
     fileContext: String(fileContext ?? ''),
     history: formatHistory(history),
     diff: String(diff ?? ''),
   };
+  const escaped = Object.fromEntries(Object.entries(raw).map(([key, value]) => [key, escapeUntrustedSection(value)]));
   const values = {
-    command: truncate(raw.command, COMMAND_MAX_CHARS), metadata: raw.metadata,
-    files: truncate(raw.files, FILES_MAX_CHARS), history: truncate(raw.history, HISTORY_MAX_CHARS),
-    fileContext: truncate(raw.fileContext, FILE_CONTEXT_MAX_CHARS), diff: truncate(raw.diff, DIFF_MAX_CHARS),
+    command: truncate(escaped.command, COMMAND_MAX_CHARS), metadata: truncate(escaped.metadata, METADATA_MAX_CHARS),
+    files: truncate(escaped.files, FILES_MAX_CHARS), history: truncate(escaped.history, HISTORY_MAX_CHARS),
+    fileContext: truncate(escaped.fileContext, FILE_CONTEXT_MAX_CHARS), diff: truncate(escaped.diff, DIFF_MAX_CHARS),
     checklist: reviewMode === 'framework-assessment' ? String(checklist ?? '') : '',
   };
   const section = (tag, value) => `<${tag}>\n${value}\n</${tag}>`;
@@ -153,7 +162,7 @@ export function buildReviewInput({ commandPrompt, pr, headSha, files, fileContex
     section('untrusted_review_history', values.history), section('untrusted_pr_diff', values.diff)];
   const input = parts.join('\n\n');
   if (input.length > INPUT_MAX_CHARS) throw new Error('Review input exceeded its fixed section budgets.');
-  return { input, truncated: Object.keys(raw).some((key) => values[key] !== raw[key]) };
+  return { input, truncated: Object.keys(raw).some((key) => values[key] !== escaped[key]) };
 }
 
 export function shouldRetryForOutputLimit(response) {
@@ -278,18 +287,22 @@ async function snapshotPath(snapshots, snapshot, requested = '.') {
 async function snapshotFiles(root, start, limit) {
   const files = [];
   const pending = [start];
+  let limitReached = false;
   while (pending.length && files.length < limit) {
     const current = pending.shift();
     const entries = await fs.readdir(current, { withFileTypes: true });
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (files.length >= limit) break;
+      if (files.length >= limit) {
+        limitReached = true;
+        break;
+      }
       const candidate = path.join(current, entry.name);
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory() && entry.name !== '.git') pending.push(candidate);
       else if (entry.isFile()) files.push(path.relative(root, candidate));
     }
   }
-  return { files, truncated: pending.length > 0 };
+  return { files, truncated: limitReached || pending.length > 0 };
 }
 async function readSnapshotFile(resolved, maxChars = EXPLORATION_FILE_MAX_CHARS) {
   const stat = await fs.stat(resolved);
@@ -483,7 +496,7 @@ async function main() {
       await postComment(api, prNumber, 'Only repository owners may use `@torch-ice-review-agent --force`; no review was run.\n\n<!-- torch-ice-review-agent: rejected reason=force_requires_owner -->');
       return;
     }
-    const pr = await githubJson(`${api}/pulls/${prNumber}`);
+    let pr = await githubJson(`${api}/pulls/${prNumber}`);
     const [baseSha, checkedOutHeadSha] = await Promise.all([
       exactHeadSha(process.env.PR_BASE_CHECKOUT_PATH), exactHeadSha(process.env.PR_CHECKOUT_PATH),
     ]);
@@ -494,6 +507,8 @@ async function main() {
       paginate(`${api}/pulls/${prNumber}/comments`), paginate(`${api}/pulls/${prNumber}/reviews`),
       githubRequest(`${api}/pulls/${prNumber}`, { headers: { Accept: 'application/vnd.github.v3.diff' } }),
     ]);
+    pr = await githubJson(`${api}/pulls/${prNumber}`);
+    verifyCheckoutShas({ baseSha, headSha: checkedOutHeadSha, pr });
     const rawDiff = await diffResponse.text();
     if (files.length > 0 && !rawDiff.trim()) throw new Error('GitHub reported changed files but returned no diff.');
     const diff = truncate(rawDiff, DIFF_MAX_CHARS);
