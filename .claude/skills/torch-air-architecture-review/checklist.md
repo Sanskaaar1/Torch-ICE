@@ -144,13 +144,13 @@ Overall %:      sum(section_pct * weight_r) / sum(weight_r) * 100
   unconditional loading wastes context and risks the model following it
   without the flag
 - [ ] **Output naming follows convention** —
-  `torch-air-report/<type>_report_<backend>.md`
+  `torch-ice-report/<type>_report_<backend>.md`
 - [ ] **Dimension phases don't pollute the base framework's `EVAL.md`** —
   keep them in the dimension's own nested `EVAL.md`
 
 ## General Conventions
 
-- [ ] **Reports target `torch-air-report/`** — the git-ignored output
+- [ ] **Reports target `torch-ice-report/`** — the git-ignored output
   directory
 - [ ] **README updated when the assessment surface changes** — a new skill
   or dimension invisible in the README effectively doesn't exist to users

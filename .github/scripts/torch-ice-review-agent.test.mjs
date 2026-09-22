@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { buildReviewInput, executeExplorationTool, extractResponseText, formatDeduplicationComment, formatFailureComment, isAllowedGithubApiUrl, isSuccessfulReviewResult, parseReviewCommand, redactSensitiveText, reviewRequestTimeoutMs, runExplorationLoop, safeFailureReason, sanitizeReviewOutput, selectReviewHistory, selectReviewMode, shouldRetryForOutputLimit, verifyCheckoutShas } from './torch-ice-review-agent.mjs';
+import { buildReviewInput, executeExplorationTool, extractResponseText, formatDeduplicationComment, formatFailureComment, isAllowedGithubApiUrl, isSuccessfulReviewResult, parseReviewCommand, readFileContext, redactSensitiveText, reviewRequestTimeoutMs, runExplorationLoop, safeFailureReason, sanitizeReviewOutput, selectReviewHistory, selectReviewMode, shouldRetryForOutputLimit, verifyCheckoutShas } from './torch-ice-review-agent.mjs';
 
 const rawRestSuccess = {
   status: 'completed',
@@ -64,17 +64,23 @@ test('explores only bounded base and head snapshots through the function-tool lo
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'torch-ice-review-agent-'));
   const base = path.join(root, 'base');
   const head = path.join(root, 'head');
-  await fs.mkdir(path.join(base, 'src'), { recursive: true });
-  await fs.mkdir(path.join(head, 'src'), { recursive: true });
-  await fs.writeFile(path.join(base, 'src', 'value.js'), 'export const value = 1;\n');
-  await fs.writeFile(path.join(head, 'src', 'value.js'), 'export const value = 2;\n');
-  try {
-    const listed = JSON.parse(await executeExplorationTool({ name: 'list_files', arguments: JSON.stringify({ snapshot: 'base', path: 'src' }) }, { base, head }));
-    const searched = JSON.parse(await executeExplorationTool({ name: 'search_code', arguments: JSON.stringify({ snapshot: 'head', query: 'value = 2' }) }, { base, head }));
-    const escaped = JSON.parse(await executeExplorationTool({ name: 'read_file', arguments: JSON.stringify({ snapshot: 'head', path: '../base/src/value.js' }) }, { base, head }));
-    assert.deepEqual(listed.files, ['src/value.js']);
-    assert.equal(searched.matches[0].path, 'src/value.js');
-    assert.match(escaped.error, /within the selected snapshot/);
+    await fs.mkdir(path.join(base, 'src'), { recursive: true });
+    await fs.mkdir(path.join(head, 'src'), { recursive: true });
+    await fs.writeFile(path.join(base, 'src', 'value.js'), 'export const value = 1;\n');
+    await fs.writeFile(path.join(head, 'src', 'value.js'), 'export const value = 2;\n');
+    await fs.mkdir(path.join(head, '.git'));
+    await fs.writeFile(path.join(head, '.git', 'config'), 'private = value\n');
+    try {
+      const listed = JSON.parse(await executeExplorationTool({ name: 'list_files', arguments: JSON.stringify({ snapshot: 'base', path: 'src' }) }, { base, head }));
+      const searched = JSON.parse(await executeExplorationTool({ name: 'search_code', arguments: JSON.stringify({ snapshot: 'head', query: 'value = 2' }) }, { base, head }));
+      const escaped = JSON.parse(await executeExplorationTool({ name: 'read_file', arguments: JSON.stringify({ snapshot: 'head', path: '../base/src/value.js' }) }, { base, head }));
+      const rootListed = JSON.parse(await executeExplorationTool({ name: 'list_files', arguments: JSON.stringify({ snapshot: 'head', path: null }) }, { base, head }));
+      const gitSearch = JSON.parse(await executeExplorationTool({ name: 'search_code', arguments: JSON.stringify({ snapshot: 'head', query: 'private', path: null }) }, { base, head }));
+      assert.deepEqual(listed.files, ['src/value.js']);
+      assert.equal(searched.matches[0].path, 'src/value.js');
+      assert.match(escaped.error, /within the selected snapshot/);
+      assert.deepEqual(rootListed.files, ['src/value.js']);
+      assert.deepEqual(gitSearch.matches, []);
 
     let requests = 0;
     const result = await runExplorationLoop(async (input) => {
@@ -87,6 +93,17 @@ test('explores only bounded base and head snapshots through the function-tool lo
     }, 'trusted review input', { base, head });
     assert.equal(result.calls, 1);
     assert.equal(requests, 2);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('keeps current-file context after removed files', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'torch-ice-review-agent-'));
+  await fs.writeFile(path.join(root, 'changed.js'), 'export const changed = true;\n');
+  try {
+    const context = await readFileContext(root, [{ filename: 'removed.js', status: 'removed' }, { filename: 'changed.js', status: 'modified' }]);
+    assert.match(context, /export const changed = true/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -105,10 +122,9 @@ test('deduplication accepts only a successful bot marker for the exact head', ()
 });
 
 test('extracts raw REST Markdown output and produces the normal success-marker body', () => {
-  const response = { ...rawRestSuccess, output: [{ type: 'message', content: [{ type: 'output_text', text: '## General Review\n\nNo blocking issues found.' }] }] };
+  const response = { status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: '## General Review\n\nNo blocking issues found.' }] }] };
   const review = sanitizeReviewOutput(extractResponseText(response));
   assert.equal(review, '## General Review\n\nNo blocking issues found.');
-  assert.equal(rawRestSuccess.status, 'completed');
   assert.equal(`${review}\n\n<!-- torch-ice-review-agent: success head_sha=abc123 -->`, '## General Review\n\nNo blocking issues found.\n\n<!-- torch-ice-review-agent: success head_sha=abc123 -->');
 });
 

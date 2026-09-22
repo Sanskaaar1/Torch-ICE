@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
 const TRUSTED = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
@@ -154,7 +153,7 @@ export function buildReviewInput({ commandPrompt, pr, headSha, files, fileContex
     section('untrusted_review_history', values.history), section('untrusted_pr_diff', values.diff)];
   const input = parts.join('\n\n');
   if (input.length > INPUT_MAX_CHARS) throw new Error('Review input exceeded its fixed section budgets.');
-  return { input, truncated: Object.keys(raw).some((key) => values[key] !== raw[key]), diffTruncated: values.diff !== raw.diff };
+  return { input, truncated: Object.keys(raw).some((key) => values[key] !== raw[key]) };
 }
 
 export function shouldRetryForOutputLimit(response) {
@@ -286,7 +285,7 @@ async function snapshotFiles(root, start, limit) {
       if (files.length >= limit) break;
       const candidate = path.join(current, entry.name);
       if (entry.isSymbolicLink()) continue;
-      if (entry.isDirectory()) pending.push(candidate);
+      if (entry.isDirectory() && entry.name !== '.git') pending.push(candidate);
       else if (entry.isFile()) files.push(path.relative(root, candidate));
     }
   }
@@ -376,13 +375,14 @@ export async function runExplorationLoop(requestReview, input, snapshots) {
     response = await requestReview(turns);
   }
 }
-async function readFileContext(checkoutPath, files) {
+export async function readFileContext(checkoutPath, files) {
   const root = await fs.realpath(checkoutPath);
   const rootPrefix = `${root}${path.sep}`;
   const sections = [];
   let remaining = FILE_CONTEXT_MAX_CHARS;
   for (const file of files) {
-    if (remaining <= 0 || file.status === 'removed') break;
+    if (remaining <= 0) break;
+    if (file.status === 'removed') continue;
     const candidate = path.resolve(root, file.filename);
     if (!candidate.startsWith(rootPrefix)) continue;
     try {
