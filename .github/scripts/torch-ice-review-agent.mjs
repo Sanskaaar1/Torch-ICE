@@ -18,6 +18,10 @@ const EXPLORATION_FILE_MAX_CHARS = 12_000;
 const EXPLORATION_SEARCH_MAX_FILES = 200;
 const EXPLORATION_SEARCH_MAX_MATCHES = 40;
 const OUTPUT_MAX_CHARS = 32_000;
+const OPENAI_REQUEST_TIMEOUT_MS = 180_000;
+// Finish model work before the 20-minute workflow timeout so failure handling
+// can still post its advisory comment.
+const REVIEW_DEADLINE_MS = 14 * 60 * 1_000;
 // Responses has no input-token limit parameter. This ceiling targets roughly
 // 48k input tokens while giving the current diff its own non-competing budget.
 const INPUT_MAX_CHARS = 192_000;
@@ -366,7 +370,9 @@ export async function runExplorationLoop(requestReview, input, snapshots) {
       outputs.push({ type: 'function_call_output', call_id: call.call_id, output });
     }
     calls += toolCalls.length;
-    turns.push(...toolCalls, ...outputs);
+    // Responses requires the complete prior output, including reasoning, on
+    // manually managed tool turns.
+    turns.push(...response.output, ...outputs);
     response = await requestReview(turns);
   }
 }
@@ -428,6 +434,21 @@ export function safeFailureReason(error) {
   if (/GitHub API URL was not allowed/.test(message)) return 'A GitHub API URL was rejected by the review agent.';
   return 'An internal torch-ice-review-agent error occurred.';
 }
+export function reviewRequestTimeoutMs(deadline, now = Date.now()) {
+  const remaining = deadline - now;
+  if (remaining <= 0) throw new Error('Review deadline exceeded.');
+  return Math.min(OPENAI_REQUEST_TIMEOUT_MS, remaining);
+}
+export function formatFailureComment({ error, repository, headSha = null, force = false }) {
+  const safe = safeFailureReason(error);
+  const marker = headSha ? `<!-- torch-ice-review-agent: failure head_sha=${headSha}${force ? ' attempt=force' : ''} -->` : '<!-- torch-ice-review-agent: failure -->';
+  return { safe, body: `Review agent could not complete this run: ${safe} See [workflow logs](${runUrl(repository)}).\n\n${marker}` };
+}
+async function reportFailure({ api, prNumber, repository, error, headSha, force }) {
+  const failure = formatFailureComment({ error, repository, headSha, force });
+  log('review_failure', { pr_number: prNumber, reason: failure.safe });
+  await postComment(api, prNumber, failure.body).catch(() => {});
+}
 async function main() {
   const event = await githubContext();
   const command = parseReviewCommand(event.comment?.body);
@@ -440,9 +461,14 @@ async function main() {
   const api = event.repository.url;
   const prNumber = event.issue.number;
   if (process.argv.includes('--base-sha')) {
-    const pr = await githubJson(`${api}/pulls/${prNumber}`);
-    if (!pr.base?.sha) throw new Error('GitHub did not return a PR base SHA.');
-    if (process.env.GITHUB_OUTPUT) await fs.appendFile(process.env.GITHUB_OUTPUT, `base_sha=${pr.base.sha}\n`);
+    try {
+      const pr = await githubJson(`${api}/pulls/${prNumber}`);
+      if (!pr.base?.sha) throw new Error('GitHub did not return a PR base SHA.');
+      if (process.env.GITHUB_OUTPUT) await fs.appendFile(process.env.GITHUB_OUTPUT, `base_sha=${pr.base.sha}\n`);
+    } catch (error) {
+      await reportFailure({ api, prNumber, repository: event.repository, error, headSha: null, force: command.force });
+      process.exitCode = 1;
+    }
     return;
   }
   let headSha = null;
@@ -508,9 +534,10 @@ async function main() {
     const { text: input, count: redactions } = redactSensitiveText(reviewInput.input);
     log('review_input', { pr_number: prNumber, review_mode: reviewMode, input_characters: input.length, input_budget_characters: INPUT_MAX_CHARS, file_context_characters: fileContext.length, truncated: reviewInput.truncated, redactions });
     const started = Date.now();
+    const deadline = started + REVIEW_DEADLINE_MS;
     const requestReview = async (requestInput, maxOutputTokens) => {
       try {
-        return await fetch('https://api.openai.com/v1/responses', { method: 'POST', signal: AbortSignal.timeout(180_000), headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'gpt-5.6-terra', text: { verbosity: 'medium' }, max_output_tokens: maxOutputTokens, store: false, instructions, tools: EXPLORATION_TOOLS, tool_choice: 'auto', parallel_tool_calls: false, input: requestInput }) });
+        return await fetch('https://api.openai.com/v1/responses', { method: 'POST', signal: AbortSignal.timeout(reviewRequestTimeoutMs(deadline)), headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'gpt-5.6-terra', text: { verbosity: 'medium' }, max_output_tokens: maxOutputTokens, store: false, instructions, tools: EXPLORATION_TOOLS, tool_choice: 'auto', parallel_tool_calls: false, input: requestInput }) });
       } catch (error) {
         if (error?.name === 'TimeoutError') throw new Error('OpenAI request timed out.');
         throw error;
@@ -546,10 +573,7 @@ async function main() {
     if (!output) throw new Error('OpenAI returned no review text.');
     await postComment(api, prNumber, `${output}\n\n${BOT_MARKER}${headSha}${command.force ? ' attempt=force' : ''} -->`);
   } catch (error) {
-    const safe = safeFailureReason(error);
-    log('review_failure', { pr_number: prNumber, reason: safe });
-    const marker = headSha ? `<!-- torch-ice-review-agent: failure head_sha=${headSha}${command.force ? ' attempt=force' : ''} -->` : '<!-- torch-ice-review-agent: failure -->';
-    await postComment(api, prNumber, `Review agent could not complete this run: ${safe} See [workflow logs](${runUrl(event.repository)}).\n\n${marker}`).catch(() => {});
+    await reportFailure({ api, prNumber, repository: event.repository, error, headSha, force: command.force });
     process.exitCode = 1;
   }
 }
