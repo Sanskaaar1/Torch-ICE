@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { buildReviewInput, executeExplorationTool, extractResponseText, formatDeduplicationComment, isAllowedGithubApiUrl, isSuccessfulReviewResult, parseReviewCommand, redactSensitiveText, runExplorationLoop, safeFailureReason, sanitizeReviewOutput, selectReviewHistory, selectReviewMode, shouldRetryForOutputLimit, verifyCheckoutShas } from './torch-ice-review-agent.mjs';
+import { buildReviewInput, executeExplorationTool, extractResponseText, formatDeduplicationComment, formatFailureComment, isAllowedGithubApiUrl, isSuccessfulReviewResult, parseReviewCommand, redactSensitiveText, reviewRequestTimeoutMs, runExplorationLoop, safeFailureReason, sanitizeReviewOutput, selectReviewHistory, selectReviewMode, shouldRetryForOutputLimit, verifyCheckoutShas } from './torch-ice-review-agent.mjs';
 
 const rawRestSuccess = {
   status: 'completed',
@@ -79,8 +79,9 @@ test('explores only bounded base and head snapshots through the function-tool lo
     let requests = 0;
     const result = await runExplorationLoop(async (input) => {
       requests += 1;
-      if (requests === 1) return { output: [{ type: 'function_call', name: 'read_file', call_id: 'read-head', arguments: JSON.stringify({ snapshot: 'head', path: 'src/value.js' }) }] };
+      if (requests === 1) return { output: [{ type: 'reasoning', id: 'reasoning-1', summary: [] }, { type: 'function_call', name: 'read_file', call_id: 'read-head', arguments: JSON.stringify({ snapshot: 'head', path: 'src/value.js' }) }] };
       assert.ok(Array.isArray(input));
+      assert.ok(input.some((item) => item.type === 'reasoning'));
       assert.match(input.at(-1).output, /value = 2/);
       return { status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'done' }] }] };
     }, 'trusted review input', { base, head });
@@ -165,6 +166,15 @@ test('retries only responses that exhausted their output-token limit', () => {
 test('classifies OpenAI timeouts explicitly for public failure comments', () => {
   assert.equal(safeFailureReason(new Error('OpenAI request timed out.')), 'The OpenAI request timed out.');
   assert.equal(safeFailureReason(Object.assign(new Error(), { name: 'TimeoutError' })), 'The OpenAI request timed out.');
+});
+
+test('uses the remaining review budget and preserves failure comments for preflight errors', () => {
+  assert.equal(reviewRequestTimeoutMs(200_000, 0), 180_000);
+  assert.equal(reviewRequestTimeoutMs(5_000, 0), 5_000);
+  assert.throws(() => reviewRequestTimeoutMs(0, 0), /Review deadline exceeded/);
+  const failure = formatFailureComment({ error: new Error('GitHub API request failed (503).'), repository: { full_name: 'owner/repo' } });
+  assert.equal(failure.safe, 'GitHub API request failed (503).');
+  assert.match(failure.body, /<!-- torch-ice-review-agent: failure -->/);
 });
 
 test('redacts high-confidence secrets before model submission', () => {
