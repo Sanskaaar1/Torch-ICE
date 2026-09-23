@@ -37,7 +37,7 @@ test('recognizes a command as the first non-whitespace content on a line and pre
 });
 
 test('dispatches nested framework assessments to the checklist and repository-wide changes to General Review', () => {
-  assert.equal(selectReviewMode([{ filename: 'README.md' }, { filename: 'SKILL.md' }, { filename: 'frameworks/pytorch/security/EVAL.md' }, { filename: 'frameworks/pytorch/security/checklist.md' }]), 'framework-assessment');
+  assert.equal(selectReviewMode([{ filename: 'README.md' }, { filename: 'SKILL.md' }, { filename: 'frameworks/pytorch/performance/EVAL.md' }, { filename: 'frameworks/pytorch/performance/checklist.md' }]), 'framework-assessment');
   assert.equal(selectReviewMode([{ filename: 'frameworks/new/EVAL.md', status: 'added' }, { filename: 'frameworks/new/checklist.md', status: 'added' }]), 'framework-assessment');
   assert.equal(selectReviewMode([{ filename: 'skills/standalone/SKILL.md', status: 'added' }]), 'framework-assessment');
   assert.equal(selectReviewMode([{ filename: '.claude-plugin/marketplace.json' }, { filename: 'README.md' }, { filename: 'SKILL.md' }, { filename: 'frameworks/pytorch/EVAL.md' }, { filename: 'frameworks/pytorch/checklist.md' }, { filename: 'skills/torch-integration-capability-evaluation/SKILL.md', status: 'renamed' }]), 'general');

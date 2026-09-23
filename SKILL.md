@@ -23,6 +23,12 @@ Optional flags:
   with a newer or different PyTorch release. If omitted, the skill detects
   the PyTorch version from the backend's own dependency metadata, falling
   back to the latest stable PyTorch release.
+- `--performance`
+  Also produce the optional PyTorch performance and resource-efficiency
+  assessment.
+- `--all`
+  Run the core readiness assessment and every optional assessment (currently
+  `--performance`).
 
 If no input is provided, ask for one.
 
@@ -33,8 +39,11 @@ text or inline summaries. For each evaluation:
 
 1. **Read the checklist template** from `frameworks/pytorch/`
    - `checklist.md` for PyTorch evaluation
+   - `performance/checklist.md` when `--performance` or `--all` is requested
 
 2. **Copy the template** to `torch-ice-report/` as the working report file
+   - Keep the performance assessment in its own report; its score does not
+     change core integration readiness.
 
 3. **Fill every table row** in the copied markdown with:
    - `Points` column: 2 = fully implemented, 1 = partially implemented, 0 = not implemented, N/A = excluded
@@ -103,6 +112,7 @@ the final summary.
 Create `torch-ice-report/` in the current project if it doesn't exist. Write:
 - `torch-ice-report/torch_readiness_report_<backend>.md` -- open-source scored checklist
 - `torch-ice-report/torch_readiness_research_<backend>.md` -- private backend narrative research
+- `torch-ice-report/torch_performance_report_<backend>.md` -- optional performance assessment
 - Print summary to user at the end
 
 ---

@@ -278,7 +278,10 @@ torch-ice/
 │       ├── EVAL.md                   # PyTorch evaluation phases and probing instructions
 │       ├── checklist.md              # PyTorch readiness checklist template (open-source)
 │       ├── checklist_private.md      # Scored checklist for closed-source backends
-│       └── research_template_private.md  # Narrative research template for private backends
+│       ├── research_template_private.md  # Narrative research template for private backends
+│       └── performance/              # Optional performance assessment
+│           ├── EVAL.md
+│           └── checklist.md
 ├── crcr/
 │   └── crcr-l1-onboarding.md        # CRCR Level 1 onboarding guide
 └── README.md
@@ -286,4 +289,4 @@ torch-ice/
 
 Adding a new framework: create `frameworks/<name>/` with `EVAL.md` (probing instructions) and `checklist.md` (fillable template), then add the framework to the dispatch table in `SKILL.md`.
 
-Adding a new evaluation dimension (e.g. security): nest under the parent framework at `frameworks/<framework>/<dimension>/`, extend the existing skill with flags (`--security`, `--all`), and do **not** add the dimension to the Framework Dispatch table.
+The optional `--performance` assessment measures performance and resource efficiency separately from core integration readiness. Adding another dimension (e.g. security): nest it under `frameworks/<framework>/<dimension>/`, extend the existing skill with flags (`--security`, `--all`), and do **not** add it to the Framework Dispatch table.
