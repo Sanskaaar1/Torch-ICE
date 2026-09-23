@@ -385,7 +385,7 @@ export async function runExplorationLoop(requestReview, input, snapshots) {
     // Responses requires the complete prior output, including reasoning, on
     // manually managed tool turns.
     turns.push(...response.output, ...outputs);
-    response = await requestReview(turns);
+    response = await requestReview(turns, calls === EXPLORATION_MAX_CALLS ? { toolChoice: 'none' } : undefined);
   }
 }
 export async function readFileContext(checkoutPath, files) {
@@ -444,6 +444,8 @@ export function safeFailureReason(error) {
   if (/OpenAI response did not complete/.test(message)) return 'OpenAI did not complete the review.';
   if (/OpenAI returned no review text/.test(message)) return message;
   if (/safe output limit/.test(message)) return 'OpenAI returned review text that exceeded the safe output limit.';
+  if (/Exploration exceeded its fixed tool-call limit/.test(message)) return 'The review exceeded its fixed exploration tool-call limit.';
+  if (/Exploration exceeded its fixed result budget/.test(message)) return 'The review exceeded its fixed exploration result-size limit.';
   if (/GitHub API URL was not allowed/.test(message)) return 'A GitHub API URL was rejected by the review agent.';
   return 'An internal torch-ice-review-agent error occurred.';
 }
@@ -550,16 +552,16 @@ async function main() {
     log('review_input', { pr_number: prNumber, review_mode: reviewMode, input_characters: input.length, input_budget_characters: INPUT_MAX_CHARS, file_context_characters: fileContext.length, truncated: reviewInput.truncated, redactions });
     const started = Date.now();
     const deadline = started + REVIEW_DEADLINE_MS;
-    const requestReview = async (requestInput, maxOutputTokens) => {
+    const requestReview = async (requestInput, maxOutputTokens, { toolChoice = 'auto' } = {}) => {
       try {
-        return await fetch('https://api.openai.com/v1/responses', { method: 'POST', signal: AbortSignal.timeout(reviewRequestTimeoutMs(deadline)), headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'gpt-5.6-terra', text: { verbosity: 'medium' }, max_output_tokens: maxOutputTokens, store: false, instructions, tools: EXPLORATION_TOOLS, tool_choice: 'auto', parallel_tool_calls: false, input: requestInput }) });
+        return await fetch('https://api.openai.com/v1/responses', { method: 'POST', signal: AbortSignal.timeout(reviewRequestTimeoutMs(deadline)), headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'gpt-5.6-terra', text: { verbosity: 'medium' }, max_output_tokens: maxOutputTokens, store: false, instructions, tools: EXPLORATION_TOOLS, tool_choice: toolChoice, parallel_tool_calls: false, input: requestInput }) });
       } catch (error) {
         if (error?.name === 'TimeoutError') throw new Error('OpenAI request timed out.');
         throw error;
       }
     };
-    const explore = async (maxOutputTokens) => runExplorationLoop(async (requestInput) => {
-      const response = await requestReview(requestInput, maxOutputTokens);
+    const explore = async (maxOutputTokens) => runExplorationLoop(async (requestInput, options) => {
+      const response = await requestReview(requestInput, maxOutputTokens, options);
       if (!response.ok) throw new Error(`OpenAI request failed (${response.status}).`);
       return response.json();
     }, input, { base: process.env.PR_BASE_CHECKOUT_PATH, head: process.env.PR_CHECKOUT_PATH });

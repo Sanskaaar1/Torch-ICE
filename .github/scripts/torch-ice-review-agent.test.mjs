@@ -109,6 +109,16 @@ test('explores only bounded base and head snapshots through the function-tool lo
     }, 'trusted review input', { base, head });
     assert.equal(result.calls, 1);
     assert.equal(requests, 2);
+
+    let cappedRequests = 0;
+    const capped = await runExplorationLoop(async (_input, options) => {
+      cappedRequests += 1;
+      if (cappedRequests === 1) return { output: Array.from({ length: 6 }, (_, index) => ({ type: 'function_call', name: 'read_file', call_id: `read-${index}`, arguments: JSON.stringify({ snapshot: 'head', path: 'src/value.js' }) })) };
+      assert.deepEqual(options, { toolChoice: 'none' });
+      return { status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'done' }] }] };
+    }, 'trusted review input', { base, head });
+    assert.equal(capped.calls, 6);
+    assert.equal(cappedRequests, 2);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -198,6 +208,8 @@ test('retries only responses that exhausted their output-token limit', () => {
 test('classifies OpenAI timeouts explicitly for public failure comments', () => {
   assert.equal(safeFailureReason(new Error('OpenAI request timed out.')), 'The OpenAI request timed out.');
   assert.equal(safeFailureReason(Object.assign(new Error(), { name: 'TimeoutError' })), 'The OpenAI request timed out.');
+  assert.equal(safeFailureReason(new Error('Exploration exceeded its fixed tool-call limit.')), 'The review exceeded its fixed exploration tool-call limit.');
+  assert.equal(safeFailureReason(new Error('Exploration exceeded its fixed result budget.')), 'The review exceeded its fixed exploration result-size limit.');
 });
 
 test('uses the remaining review budget and preserves failure comments for preflight errors', () => {
