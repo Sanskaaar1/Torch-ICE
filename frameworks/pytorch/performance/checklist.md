@@ -7,7 +7,10 @@
 |-------|-------|
 | **Backend** | _[FILL: backend name and version]_ |
 | **PyTorch / backend runtime** | _[FILL: versions]_ |
+| **PyTorch build / commit** | _[FILL: release build or source revision]_ |
 | **Hardware / driver** | _[FILL: accelerator, host, driver, firmware]_ |
+| **Workload configuration** | _[FILL: model, input shape, precision, batch size, execution mode]_ |
+| **Benchmark command / source** | _[FILL: exact command and benchmark harness or revision]_ |
 | **Baseline or target** | _[FILL: target and comparable configuration]_ |
 | **Evaluation date** | _[FILL: date]_ |
 
