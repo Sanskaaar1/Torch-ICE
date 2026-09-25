@@ -133,7 +133,18 @@ export function sanitizeReviewOutput(value) {
 }
 
 export function hasRequiredReviewSections(output, { reviewMode, prNumber }) {
-  const sections = [...output.matchAll(/^## ([^\r\n]+)\r?\n([\s\S]*?)(?=^## |$(?![\s\S]))/gm)];
+  let fence = null;
+  const markdown = output.split(/\r?\n/).map((line) => {
+    if (fence) {
+      const close = line.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/);
+      if (close && close[1][0] === fence[0] && close[1].length >= fence.length) fence = null;
+      return line.replace(/^## /, ' ## ');
+    }
+    const open = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (open) fence = open[1];
+    return line;
+  }).join('\n');
+  const sections = [...markdown.matchAll(/^## ([^\r\n]+)\r?\n([\s\S]*?)(?=^## |$(?![\s\S]))/gm)];
   const hasContent = (heading) => sections.some(([, name, body]) => name === heading && body.replace(/^#{1,6}[^\r\n]*$/gm, '').trim());
   return hasContent('General Review') && (reviewMode !== 'framework-assessment' || hasContent(`Framework Assessment Review: PR #${prNumber}`));
 }

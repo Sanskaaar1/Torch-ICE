@@ -78,6 +78,11 @@ test('requires a nonempty General Review and the PR-specific framework section',
   assert.equal(hasRequiredReviewSections('## General Review\n\n### Summary', { reviewMode: 'general', prNumber: 8 }), false);
 });
 
+test('does not count headings inside fenced examples as review sections', () => {
+  const example = '```markdown\n## General Review\nNo findings.\n\n## Framework Assessment Review: PR #8\nFinding\n```';
+  assert.equal(hasRequiredReviewSections(example, { reviewMode: 'framework-assessment', prNumber: 8 }), false);
+});
+
 test('retries malformed review sections once with sanitized output', async () => {
   const corrections = [];
   const output = await reviewWithSectionRetry(async (corrected) => {
