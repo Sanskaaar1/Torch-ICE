@@ -40,11 +40,31 @@ export async function collectDirectEvidence({ baseRoot, headRoot, baseSha, headS
 
 const UNIT_LIMIT = 20_000;
 const incomplete = (reason) => new Error(`Review evidence incomplete: ${reason}.`);
-const binaryMarker = /Binary files .* differ|GIT binary patch/;
+const binaryMarker = (patch) => patch && !/^@@ /m.test(patch) && /^(?:Binary files .* differ|GIT binary patch)$/m.test(patch);
 const escapedLength = (value) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').length;
 
+function completeHunks(patch) {
+  let expected = null;
+  let actual = [0, 0];
+  for (const line of patch.replace(/\n$/, '').split('\n')) {
+    const match = line.match(/^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/);
+    if (match) {
+      if (expected && (actual[0] !== expected[0] || actual[1] !== expected[1])) return false;
+      expected = [Number(match[1] ?? 1), Number(match[2] ?? 1)];
+      actual = [0, 0];
+    } else if (expected) {
+      if (line.startsWith('-')) actual[0]++;
+      else if (line.startsWith('+')) actual[1]++;
+      else if (line.startsWith(' ')) { actual[0]++; actual[1]++; }
+      else if (!line.startsWith('\\')) return false;
+    }
+  }
+  return !expected || (actual[0] === expected[0] && actual[1] === expected[1]);
+}
+
 function sourcePieces(label, patch) {
-  const lines = patch.split('\n');
+  if (!completeHunks(patch)) throw incomplete('incomplete diff hunk');
+  const lines = patch.replace(/\n$/, '').split('\n');
   const pieces = [];
   let current = label;
   const flush = () => { if (current !== label) pieces.push(current); current = label; };
@@ -112,8 +132,12 @@ export function buildReviewUnits({ githubFiles, rawDiff, directEvidence }) {
       const heading = section.split('\n', 1)[0];
       return heading.endsWith(` b/${file.filename}`) || heading.endsWith(` b/${file.filename}"`);
     });
-    const patch = file.patch ?? (binaryMarker.test(rawSection ?? '') ? rawSection : null);
-    if (!patch?.trim() && !names.some((name) => directEvidence.some((item) => item.path === name && binaryMarker.test(item.patch)))) {
+    let patch = file.patch ?? (binaryMarker(rawSection) ? rawSection : null);
+    if (patch?.trim() && !completeHunks(patch)) {
+      if (!rawSection || !/^@@ /m.test(rawSection) || !completeHunks(rawSection)) throw incomplete(`incomplete diff hunk for ${file.filename}`);
+      patch = rawSection;
+    }
+    if (!patch?.trim() && !names.some((name) => directEvidence.some((item) => item.path === name && binaryMarker(item.patch)))) {
       throw incomplete(`missing textual evidence for ${file.filename}`);
     }
     for (const name of names) ensure(name).push({ view: 'pr', label: `Path: ${name}\nPR diff (${file.status})`, patch: patch?.trim() ? patch : 'Binary file (GitHub omitted patch).' });

@@ -167,3 +167,30 @@ test('split units repeat both view labels for a shared path', () => {
   assert.equal(units.length, 2);
   assert.ok(units.every((unit) => unit.path === 'shared.js' && unit.views.join(',') === 'pr,base_head'));
 });
+
+test('uses complete raw textual evidence when the GitHub hunk is incomplete', () => {
+  const rawDiff = 'diff --git a/partial.js b/partial.js\n--- a/partial.js\n+++ b/partial.js\n@@ -1,2 +1,2 @@\n-old\n-context\n+new\n+extra\n';
+  const units = buildReviewUnits({
+    githubFiles: [{ filename: 'partial.js', status: 'modified', patch: '@@ -1,2 +1,2 @@\n-old\n+new' }],
+    rawDiff, directEvidence: [],
+  });
+  assert.match(units[0].evidence, /-context/);
+  assert.match(units[0].evidence, /\+extra/);
+  assert.match(units[0].evidence, /@@ -1,2 \+1,2 @@/);
+});
+
+test('does not treat a quoted binary marker in a textual hunk as binary metadata', () => {
+  assert.throws(() => buildReviewUnits({
+    githubFiles: [{ filename: 'text.js', status: 'modified' }], rawDiff: '',
+    directEvidence: [{ path: 'text.js', status: 'M', patch: 'diff --git a/text.js b/text.js\n@@ -0,0 +1 @@\n+console.log("GIT binary patch")' }],
+  }), /Review evidence incomplete: missing textual evidence/);
+});
+
+test('does not count a trailing newline as hunk context', () => {
+  const units = buildReviewUnits({
+    githubFiles: [{ filename: 'newline.js', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new\n' }],
+    rawDiff: '', directEvidence: [],
+  });
+  assert.match(units[0].evidence, /@@ -1,1 \+1,1 @@/);
+  assert.doesNotMatch(units[0].evidence, /@@ -1,2 \+1,2 @@/);
+});
