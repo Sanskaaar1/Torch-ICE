@@ -1,5 +1,6 @@
 import test from 'node:test';
 import * as agent from './torch-ice-review-agent.mjs';
+import { packReviewBatches } from './torch-ice-review-evidence.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -412,4 +413,74 @@ test('rejects PEM spans split across review units before preparing any model evi
   for (const marker of ['-----BEGIN PRIVATE KEY-----', '-----END RSA PRIVATE KEY-----']) {
     assert.throws(() => agent.prepareReviewUnits({ githubFiles: [], rawDiff: '', directEvidence: [{ path: 'partial.pem', status: 'A', patch: `@@ -0,0 +1 @@\n+${marker}` }] }), /Review evidence incomplete: sensitive span/);
   }
+});
+
+
+test('complete two-view pipeline retains direct-only regressions and gates success posting', async () => {
+  const inventory = {
+    githubFiles: [{ filename: 'frameworks/pytorch/performance/EVAL.md', status: 'added', patch: '@@ -0,0 +1 @@\n+Assess performance' }], rawDiff: '',
+    directEvidence: [{ path: 'src/guard.js', status: 'M', patch: '@@ -1 +0,0 @@\n-guard' }],
+  };
+  const batches = packReviewBatches(agent.prepareReviewUnits(inventory));
+  assert.ok(batches.some((batch) => batch.evidence.includes('src/guard.js')));
+  const requestBatch = async (batch) => ({ reviewed_unit_ids: batch.ids, findings: batch.units.filter((unit) => unit.path === 'src/guard.js').map((unit) => ({
+    ...batchFinding, unit_ids: [unit.id], view: 'base_head', path: unit.path, location: 'deleted line 1', evidence: 'guard deleted', impact: 'validation bypassed', fix: 'rebase onto main',
+  })) });
+  const originalFetch = globalThis.fetch;
+  const posted = [];
+  let head = 'head';
+  globalThis.fetch = async (url, options = {}) => {
+    if (options.method === 'POST') posted.push(JSON.parse(options.body).body);
+    return { ok: true, json: async () => ({ base: { sha: 'base' }, head: { sha: head } }) };
+  };
+  const pipeline = async (input = batches, model = requestBatch) => {
+    const findings = await agent.reviewBatches(input, model, Date.now() + 60_000);
+    const markdown = await agent.consolidateFindings({ findings, pr: { number: 8, title: 'Performance assessment' }, reviewMode: 'framework-assessment', deadline: Date.now() + 60_000,
+      requestConsolidation: async ({ findings: candidates }) => {
+        assert.equal(candidates[0].id, 'f1');
+        assert.equal(candidates[0].evidence, 'guard deleted');
+        return { groups: [{ finding_ids: ['f1'] }] };
+      },
+    });
+    assert.match(markdown, /## General Review[\s\S]*src\/guard\.js/);
+    assert.match(markdown, /Framework Assessment Review: PR #8/);
+    await postSuccessComment('https://api.github.com/repos/owner/repo', 8, `${markdown}\n\n<!-- torch-ice-review-agent: success head_sha=head attempt=force -->`, 'base', 'head');
+  };
+  try {
+    await pipeline();
+    assert.equal(posted.length, 1);
+    assert.match(posted[0], /validation bypassed/);
+    assert.ok(isSuccessfulReviewResult({ user: { login: 'github-actions[bot]' }, body: posted[0] }, 'head'));
+    posted.length = 0;
+    await assert.rejects(pipeline(batches, async () => ({ reviewed_unit_ids: [], findings: [] })), /Review evidence incomplete/);
+    await assert.rejects(async () => pipeline(packReviewBatches(agent.prepareReviewUnits({ ...inventory, directEvidence: [{ path: 'huge.js', status: 'A', patch: '@@ -0,0 +1 @@\n+' + 'x'.repeat(20_001) }] }))), /Review evidence incomplete/);
+    head = 'new-head';
+    await assert.rejects(pipeline(), /PR head/);
+    assert.equal(posted.length, 0);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('consolidation validates IDs and schema, groups original fields, and enforces the deadline', async () => {
+  assert.equal(typeof agent.consolidateFindings, 'function');
+  const findings = [batchFinding, { ...batchFinding, path: 'src/b.js', evidence: 'guard removed', fix: 'rebase onto main' }];
+  const options = { findings, pr: { number: 8 }, reviewMode: 'general', deadline: Date.now() + 60_000 };
+  const markdown = await agent.consolidateFindings({ ...options, requestConsolidation: async () => ({ groups: [{ finding_ids: ['f1', 'f2'] }] }) });
+  assert.match(markdown, /src\/a\.js/);
+  assert.match(markdown, /src\/b\.js/);
+  assert.match(markdown, /guard removed/);
+  assert.equal((markdown.match(/### Finding/g) ?? []).length, 1);
+  for (const result of [null, {}, { groups: null }, { groups: [null] }, { groups: [{ finding_ids: [] }] }, { groups: [{ finding_ids: ['f3'] }] }, { groups: [{ finding_ids: ['f1', 'f1'] }] }, { groups: [{ finding_ids: ['f1'] }, { finding_ids: ['f1'] }] }, { groups: [], text: 'invented' }, { groups: [{ finding_ids: ['f1'], text: 'invented' }] }]) {
+    await assert.rejects(agent.consolidateFindings({ ...options, requestConsolidation: async () => result }), /Review evidence incomplete/);
+  }
+  const empty = await agent.consolidateFindings({ ...options, requestConsolidation: async () => ({ groups: [] }) });
+  assert.match(empty, /No actionable General Review findings/);
+  await assert.rejects(agent.consolidateFindings({ ...options, deadline: 0, requestConsolidation: async () => { throw new Error('must not call'); } }), /Review evidence incomplete: deadline/);
+  // Check deadline after the request without relying on wall-clock sleeps.
+  const originalNow = Date.now;
+  try {
+    let now = 1;
+    Date.now = () => now;
+    await assert.rejects(agent.consolidateFindings({ ...options, deadline: 2, requestConsolidation: async () => { now = 3; return { groups: [] }; } }), /Review evidence incomplete: deadline/);
+  } finally { Date.now = originalNow; }
+  assert.equal(safeFailureReason(new Error('Review evidence incomplete: untrusted path')), 'The review could not account for all required evidence or complete consolidation; no partial findings were posted.');
 });

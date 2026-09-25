@@ -234,19 +234,26 @@ Every invocation retrieves its review memory fresh from the current PR in
 GitHub: metadata, files/diff, review and conversation comments, and trusted
 maintainer feedback. This compact, bounded history helps follow-up reviews
 avoid repeating resolved findings. No database, embeddings service, vector
-store, or persistent external memory is used. The complete textual GitHub diff,
-including lockfiles, vendor code, build logic, generated artifacts, and SVGs,
-is included up to a 160,000-character cap; binary-change metadata is retained.
-Inputs use fixed section budgets under a 256,000-character ceiling (about 64k
-tokens), so metadata and history cannot displace the diff. Reviews are posted
-as Markdown.
+store, or persistent external memory is used. The agent reviews two comparison
+views: the GitHub PR diff and the current base directly against the PR head,
+including direct-only paths that can expose stale-branch regressions. Textual
+evidence includes lockfiles, vendor code, build logic, generated artifacts,
+and SVGs; binary-change metadata is retained. Complete evidence units are
+packed into at most eight batches totaling 160,000 characters. Each request
+uses fixed section budgets under a 256,000-character ceiling (about 64k tokens).
+Every unit must be accounted for before a final tools-disabled request groups
+validated findings. The application renders an advisory Markdown review from
+those original findings. Missing evidence, exceeded limits, invalid results,
+or failed consolidation produce a failure comment without partial findings.
+The base and head SHAs are checked again immediately before posting success.
 
 Repository administrators must configure the `OPENAI_API_KEY` Actions secret.
 The workflow requires only `contents: read`, `pull-requests: write`, and
 `issues: write`; the write scopes are used for the acknowledgement reaction and
 normal PR conversation comments. OpenAI requests allow 180 seconds and start
-with 6,144 output tokens, with one 8,192-token retry only when the first response
-reaches its output-token limit. PRs labelled `security`, `private`, or
+with 6,144 output tokens. Each batch gets at most one 8,192-token retry after
+a failed request or validation; consolidation gets one request. All model work
+shares a 14-minute deadline. PRs labelled `security`, `private`, or
 `do-not-ai-review` are not sent to OpenAI. Repository administrators should
 protect `main` and require designated review for workflow, prompt, and review
 agent script changes.
