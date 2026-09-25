@@ -199,3 +199,52 @@ test('does not count a trailing newline as hunk context', () => {
   assert.match(units[0].evidence, /@@ -1,1 \+1,1 @@/);
   assert.doesNotMatch(units[0].evidence, /@@ -1,2 \+1,2 @@/);
 });
+
+test('accepts complete PR metadata for changes without textual hunks', () => {
+  const cases = [
+    [{ filename: 'new.txt', previous_filename: 'old.txt', status: 'renamed' }, 'diff --git a/old.txt b/new.txt\nsimilarity index 100%\nrename from old.txt\nrename to new.txt\n'],
+    [{ filename: 'empty.txt', status: 'added' }, 'diff --git a/empty.txt b/empty.txt\nnew file mode 100644\nindex 0000000..e69de29\n'],
+    [{ filename: 'empty.txt', status: 'removed' }, 'diff --git a/empty.txt b/empty.txt\ndeleted file mode 100644\nindex e69de29..0000000\n'],
+    [{ filename: 'script.sh', status: 'modified' }, 'diff --git a/script.sh b/script.sh\nold mode 100644\nnew mode 100755\n'],
+  ];
+  for (const [file, rawDiff] of cases) {
+    for (const patch of [undefined, '']) {
+      const units = buildReviewUnits({ githubFiles: [{ ...file, additions: 0, deletions: 0, patch }], rawDiff, directEvidence: [] });
+      assert.deepEqual(units.map((unit) => unit.path).sort(), [file.filename, file.previous_filename].filter(Boolean).sort());
+      for (const unit of units) {
+        assert.deepEqual(unit.views, ['pr']);
+        assert.ok(unit.evidence.includes(rawDiff.trim()));
+        assert.doesNotMatch(unit.evidence, /Binary file/);
+      }
+    }
+  }
+});
+
+test('does not accept metadata when PR textual evidence is missing', () => {
+  for (const [additions, deletions, metadata] of [
+    [1, 1, 'old mode 100644\nnew mode 100755\n'],
+    [0, 0, 'old mode 100644\n'],
+    [0, 0, 'index 1234567..abcdef0 100644\n--- a/file.txt\n+++ b/file.txt\n'],
+  ]) {
+    assert.throws(() => buildReviewUnits({
+      githubFiles: [{ filename: 'file.txt', status: 'modified', additions, deletions }],
+      rawDiff: `diff --git a/file.txt b/file.txt\n${metadata}`, directEvidence: [],
+    }), /Review evidence incomplete/);
+  }
+});
+
+test('uses raw PR text independently of a binary current-base comparison', () => {
+  const rawDiff = 'diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old text\n+new text\n';
+  const directEvidence = [{ path: 'file.txt', status: 'M', patch: 'diff --git a/file.txt b/file.txt\nBinary files a/file.txt and b/file.txt differ\n' }];
+  for (const patch of [undefined, '']) {
+    const units = buildReviewUnits({ githubFiles: [{ filename: 'file.txt', status: 'modified', patch }], rawDiff, directEvidence });
+    assert.match(units[0].evidence, /PR diff[\s\S]*-old text\n\+new text/);
+    assert.match(units[0].evidence, /current base to head[\s\S]*Binary files/);
+    assert.doesNotMatch(units[0].evidence, /GitHub omitted patch/);
+  }
+  for (const unavailable of ['', rawDiff.replace('+new text\n', '')]) {
+    assert.throws(() => buildReviewUnits({
+      githubFiles: [{ filename: 'file.txt', status: 'modified' }], rawDiff: unavailable, directEvidence,
+    }), /Review evidence incomplete/);
+  }
+});

@@ -43,6 +43,15 @@ const incomplete = (reason) => new Error(`Review evidence incomplete: ${reason}.
 const binaryMarker = (patch) => patch && !/^@@ /m.test(patch) && /^(?:Binary files .* differ|GIT binary patch)$/m.test(patch);
 const escapedLength = (value) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').length;
 
+function metadataOnly(file, patch) {
+  if (!patch || file.additions !== 0 || file.deletions !== 0) return false;
+  const metadata = patch.slice(patch.indexOf('\n') + 1).replace(/\n$/, '');
+  return /^(?:old mode [0-7]{6}\nnew mode [0-7]{6}\n)?similarity index 100%\nrename from [^\n]+\nrename to [^\n]+$/.test(metadata)
+    || /^old mode [0-7]{6}\nnew mode [0-7]{6}$/.test(metadata)
+    || /^new file mode [0-7]{6}\nindex 0+\.\.[a-f0-9]+$/.test(metadata)
+    || /^deleted file mode [0-7]{6}\nindex [a-f0-9]+\.\.0+$/.test(metadata);
+}
+
 function completeHunks(patch) {
   let expected = null;
   let actual = [0, 0];
@@ -132,15 +141,17 @@ export function buildReviewUnits({ githubFiles, rawDiff, directEvidence }) {
       const heading = section.split('\n', 1)[0];
       return heading.endsWith(` b/${file.filename}`) || heading.endsWith(` b/${file.filename}"`);
     });
-    let patch = file.patch ?? (binaryMarker(rawSection) ? rawSection : null);
+    let patch = file.patch?.trim() ? file.patch : (
+      rawSection && (/^@@ /m.test(rawSection) || binaryMarker(rawSection) || metadataOnly(file, rawSection)) ? rawSection : null
+    );
     if (patch?.trim() && !completeHunks(patch)) {
       if (!rawSection || !/^@@ /m.test(rawSection) || !completeHunks(rawSection)) throw incomplete(`incomplete diff hunk for ${file.filename}`);
       patch = rawSection;
     }
-    if (!patch?.trim() && !names.some((name) => directEvidence.some((item) => item.path === name && binaryMarker(item.patch)))) {
+    if (!patch?.trim()) {
       throw incomplete(`missing textual evidence for ${file.filename}`);
     }
-    for (const name of names) ensure(name).push({ view: 'pr', label: `Path: ${name}\nPR diff (${file.status})`, patch: patch?.trim() ? patch : 'Binary file (GitHub omitted patch).' });
+    for (const name of names) ensure(name).push({ view: 'pr', label: `Path: ${name}\nPR diff (${file.status})`, patch });
   }
   for (const item of directEvidence) {
     if (!item.patch?.trim()) throw incomplete(`missing textual evidence for ${item.path}`);
