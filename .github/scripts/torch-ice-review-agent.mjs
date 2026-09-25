@@ -132,6 +132,20 @@ export function sanitizeReviewOutput(value) {
   return output;
 }
 
+export function hasRequiredReviewSections(output, { reviewMode, prNumber }) {
+  const sections = [...output.matchAll(/^## ([^\r\n]+)\r?\n([\s\S]*?)(?=^## |$(?![\s\S]))/gm)];
+  const hasContent = (heading) => sections.some(([, name, body]) => name === heading && body.replace(/^#{1,6}[^\r\n]*$/gm, '').trim());
+  return hasContent('General Review') && (reviewMode !== 'framework-assessment' || hasContent(`Framework Assessment Review: PR #${prNumber}`));
+}
+
+export async function reviewWithSectionRetry(review, context) {
+  for (const corrected of [false, true]) {
+    const output = sanitizeReviewOutput(await review(corrected));
+    if (hasRequiredReviewSections(output, context)) return output;
+  }
+  throw new Error('OpenAI review text did not contain required sections.');
+}
+
 function escapeUntrustedSection(value) {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -257,6 +271,10 @@ async function addReaction(api, commentId) {
 async function postComment(api, issueNumber, body) {
   await githubJson(`${api}/issues/${issueNumber}/comments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body }) });
 }
+export async function postSuccessComment(api, prNumber, body, baseSha, headSha) {
+  verifyCheckoutShas({ baseSha, headSha, pr: await githubJson(`${api}/pulls/${prNumber}`) });
+  await postComment(api, prNumber, body);
+}
 async function exactHeadSha(checkoutPath) {
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
@@ -362,30 +380,32 @@ export async function executeExplorationTool(call, snapshots) {
   }
 }
 
-export async function runExplorationLoop(requestReview, input, snapshots) {
-  let response = await requestReview(input);
+export async function runExplorationLoop(requestReview, input, snapshots, budget = { calls: 0, characters: 0 }) {
+  let response = await requestReview(input, budget.calls >= 2 * EXPLORATION_MAX_CALLS || budget.characters >= 2 * EXPLORATION_MAX_CHARS ? { toolChoice: 'none' } : undefined);
   const turns = [{ role: 'user', content: input }];
   let calls = 0;
   let characters = 0;
   while (true) {
     const toolCalls = (Array.isArray(response.output) ? response.output : []).filter((item) => item.type === 'function_call');
     if (!toolCalls.length) return { response, calls, characters };
-    if (calls + toolCalls.length > EXPLORATION_MAX_CALLS) throw new Error('Exploration exceeded its fixed tool-call limit.');
+    if (calls + toolCalls.length > EXPLORATION_MAX_CALLS || budget.calls + toolCalls.length > 2 * EXPLORATION_MAX_CALLS) throw new Error('Exploration exceeded its fixed tool-call limit.');
     const outputs = [];
     for (const call of toolCalls) {
       const raw = await executeExplorationTool(call, snapshots);
       const { text } = redactSensitiveText(raw);
-      const remaining = EXPLORATION_MAX_CHARS - characters;
+      const remaining = Math.min(EXPLORATION_MAX_CHARS - characters, 2 * EXPLORATION_MAX_CHARS - budget.characters);
       if (remaining <= 0) throw new Error('Exploration exceeded its fixed result budget.');
       const output = truncate(text, remaining);
       characters += output.length;
+      budget.characters += output.length;
       outputs.push({ type: 'function_call_output', call_id: call.call_id, output });
     }
     calls += toolCalls.length;
+    budget.calls += toolCalls.length;
     // Responses requires the complete prior output, including reasoning, on
     // manually managed tool turns.
     turns.push(...response.output, ...outputs);
-    response = await requestReview(turns, calls >= EXPLORATION_MAX_CALLS || characters >= EXPLORATION_MAX_CHARS ? { toolChoice: 'none' } : undefined);
+    response = await requestReview(turns, calls >= EXPLORATION_MAX_CALLS || characters >= EXPLORATION_MAX_CHARS || budget.calls >= 2 * EXPLORATION_MAX_CALLS || budget.characters >= 2 * EXPLORATION_MAX_CHARS ? { toolChoice: 'none' } : undefined);
   }
 }
 export async function readFileContext(checkoutPath, files) {
@@ -443,6 +463,7 @@ export function safeFailureReason(error) {
   if (/GitHub reported changed files but returned no diff/.test(message)) return message;
   if (/OpenAI response did not complete/.test(message)) return 'OpenAI did not complete the review.';
   if (/OpenAI returned no review text/.test(message)) return message;
+  if (/OpenAI review text did not contain required sections/.test(message)) return message;
   if (/safe output limit/.test(message)) return 'OpenAI returned review text that exceeded the safe output limit.';
   if (/Exploration exceeded its fixed tool-call limit/.test(message)) return 'The review exceeded its fixed exploration tool-call limit.';
   if (/Exploration exceeded its fixed result budget/.test(message)) return 'The review exceeded its fixed exploration result-size limit.';
@@ -552,43 +573,46 @@ async function main() {
     log('review_input', { pr_number: prNumber, review_mode: reviewMode, input_characters: input.length, input_budget_characters: INPUT_MAX_CHARS, file_context_characters: fileContext.length, truncated: reviewInput.truncated, redactions });
     const started = Date.now();
     const deadline = started + REVIEW_DEADLINE_MS;
-    const requestReview = async (requestInput, maxOutputTokens, { toolChoice = 'auto' } = {}) => {
+    // The previous output-limit retry permitted at most two exploration runs.
+    const explorationBudget = { calls: 0, characters: 0 };
+    const correction = `\n\nYour previous response omitted or left empty a required section. Return a complete review with a nonempty ## General Review section${reviewMode === 'framework-assessment' ? ` and a nonempty ## Framework Assessment Review: PR #${prNumber} section` : ''}. Preserve evidenced findings and the problems-only convention.`;
+    const requestReview = async (requestInput, maxOutputTokens, corrected, { toolChoice = 'auto' } = {}) => {
       try {
-        return await fetch('https://api.openai.com/v1/responses', { method: 'POST', signal: AbortSignal.timeout(reviewRequestTimeoutMs(deadline)), headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'gpt-5.6-terra', text: { verbosity: 'medium' }, max_output_tokens: maxOutputTokens, store: false, instructions, tools: EXPLORATION_TOOLS, tool_choice: toolChoice, parallel_tool_calls: false, input: requestInput }) });
+        return await fetch('https://api.openai.com/v1/responses', { method: 'POST', signal: AbortSignal.timeout(reviewRequestTimeoutMs(deadline)), headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'gpt-5.6-terra', text: { verbosity: 'medium' }, max_output_tokens: maxOutputTokens, store: false, instructions: corrected ? instructions + correction : instructions, tools: EXPLORATION_TOOLS, tool_choice: toolChoice, parallel_tool_calls: false, input: requestInput }) });
       } catch (error) {
         if (error?.name === 'TimeoutError') throw new Error('OpenAI request timed out.');
         throw error;
       }
     };
-    const explore = async (maxOutputTokens) => runExplorationLoop(async (requestInput, options) => {
-      const response = await requestReview(requestInput, maxOutputTokens, options);
+    const explore = async (maxOutputTokens, corrected) => runExplorationLoop(async (requestInput, options) => {
+      const response = await requestReview(requestInput, maxOutputTokens, corrected, options);
       if (!response.ok) throw new Error(`OpenAI request failed (${response.status}).`);
       return response.json();
-    }, input, { base: process.env.PR_BASE_CHECKOUT_PATH, head: process.env.PR_CHECKOUT_PATH });
-    let exploration = await explore(INITIAL_MAX_OUTPUT_TOKENS);
-    let result = exploration.response;
-    if (shouldRetryForOutputLimit(result)) {
-      log('openai_retry', { pr_number: prNumber, reason: result.incomplete_details.reason, max_output_tokens: RETRY_MAX_OUTPUT_TOKENS });
-      exploration = await explore(RETRY_MAX_OUTPUT_TOKENS);
-      result = exploration.response;
-    }
-    const latencyMs = Date.now() - started;
-    const extracted = extractResponseText(result);
-    log('openai_response', {
-      latency_ms: latencyMs,
-      status: result.status ?? null,
-      output_items: Array.isArray(result.output) ? result.output.length : 0,
-      exploration_tool_calls: exploration.calls,
-      exploration_characters_sent: exploration.characters,
-      extracted_text_characters: extracted.length,
-      incomplete_details: result.incomplete_details ?? null,
-      usage: result.usage ?? null,
-    });
-    if (result.status !== 'completed') throw new Error('OpenAI response did not complete.');
-    if (!extracted) throw new Error('OpenAI returned no review text.');
-    const output = sanitizeReviewOutput(extracted);
-    if (!output) throw new Error('OpenAI returned no review text.');
-    await postComment(api, prNumber, `${output}\n\n${BOT_MARKER}${headSha}${command.force ? ' attempt=force' : ''} -->`);
+    }, input, { base: process.env.PR_BASE_CHECKOUT_PATH, head: process.env.PR_CHECKOUT_PATH }, explorationBudget);
+    const output = await reviewWithSectionRetry(async (corrected) => {
+      if (corrected) log('openai_retry', { pr_number: prNumber, reason: 'missing_required_sections' });
+      let exploration = await explore(INITIAL_MAX_OUTPUT_TOKENS, corrected);
+      let result = exploration.response;
+      if (shouldRetryForOutputLimit(result)) {
+        log('openai_retry', { pr_number: prNumber, reason: result.incomplete_details.reason, max_output_tokens: RETRY_MAX_OUTPUT_TOKENS });
+        exploration = await explore(RETRY_MAX_OUTPUT_TOKENS, corrected);
+        result = exploration.response;
+      }
+      const extracted = extractResponseText(result);
+      log('openai_response', {
+        latency_ms: Date.now() - started,
+        status: result.status ?? null,
+        output_items: Array.isArray(result.output) ? result.output.length : 0,
+        exploration_tool_calls: exploration.calls,
+        exploration_characters_sent: exploration.characters,
+        extracted_text_characters: extracted.length,
+        incomplete_details: result.incomplete_details ?? null,
+        usage: result.usage ?? null,
+      });
+      if (result.status !== 'completed') throw new Error('OpenAI response did not complete.');
+      return extracted;
+    }, { reviewMode, prNumber });
+    await postSuccessComment(api, prNumber, `${output}\n\n${BOT_MARKER}${headSha}${command.force ? ' attempt=force' : ''} -->`, baseSha, headSha);
   } catch (error) {
     await reportFailure({ api, prNumber, repository: event.repository, error, headSha, force: command.force });
     process.exitCode = 1;

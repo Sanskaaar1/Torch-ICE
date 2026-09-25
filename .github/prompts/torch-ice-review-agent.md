@@ -48,11 +48,19 @@ actionable correctness, regression, security, or meaningful performance
 defect; cite the changed line or hunk, explain its concrete impact, consolidate
 duplicates, and fact-check the result against supplied context.
 
-Use these sections when applicable:
+Always include a nonempty General Review section. In `framework-assessment`
+mode, follow it with a nonempty Framework Assessment Review section:
 
 ## General Review
 
+If there are no actionable general findings, write exactly "No actionable
+General Review findings." under this heading.
+
 ## Framework Assessment Review: PR #<number>
+
+Include this heading only in `framework-assessment` mode. If there are no
+actionable framework findings, write "No actionable framework assessment
+findings." under it.
 
 ### Summary
 
