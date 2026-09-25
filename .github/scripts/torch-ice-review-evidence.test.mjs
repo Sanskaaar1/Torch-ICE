@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { collectDirectEvidence } from './torch-ice-review-evidence.mjs';
+import { collectDirectEvidence, buildReviewUnits, packReviewBatches } from './torch-ice-review-evidence.mjs';
 
 const execFileAsync = promisify(execFile);
 const git = async (cwd, ...args) => (await execFileAsync('git', args, { cwd })).stdout.trim();
@@ -87,4 +87,83 @@ test('collects the patch for a filename containing pathspec syntax', async () =>
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
+});
+
+test('inventories PR, direct, renamed, and binary paths with their source labels', () => {
+  const githubFiles = [
+    { filename: 'src/shared.js', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' },
+    { filename: 'src/pr-only.js', status: 'added', patch: '@@ -0,0 +1 @@\n+new' },
+    { filename: 'src/new-name.js', previous_filename: 'src/old-name.js', status: 'renamed', patch: '@@ -1 +1 @@\n-old name\n+new name' },
+    { filename: 'src/image.png', status: 'added' },
+  ];
+  const directEvidence = [
+    { path: 'src/shared.js', status: 'M', patch: '@@ -1 +1 @@\n-old\n+new' },
+    { path: 'src/guard.js', status: 'D', patch: '@@ -1 +0,0 @@\n-guard' },
+  ];
+  const rawDiff = 'diff --git a/src/image.png b/src/image.png\nnew file mode 100644\nBinary files /dev/null and b/src/image.png differ\n';
+  const units = buildReviewUnits({ githubFiles, rawDiff, directEvidence });
+  assert.deepEqual([...new Set(units.map((unit) => unit.path))], [
+    'src/guard.js', 'src/image.png', 'src/new-name.js', 'src/old-name.js', 'src/pr-only.js', 'src/shared.js',
+  ]);
+  assert.deepEqual(units.find((unit) => unit.path === 'src/shared.js').views, ['pr', 'base_head']);
+  assert.match(units.find((unit) => unit.path === 'src/shared.js').evidence, /PR diff[\s\S]*current base to head/);
+  assert.match(units.find((unit) => unit.path === 'src/guard.js').evidence, /-guard/);
+  assert.match(units.find((unit) => unit.path === 'src/image.png').evidence, /Binary files/);
+  assert.match(units.find((unit) => unit.path === 'src/old-name.js').evidence, /old name/);
+  assert.deepEqual(units.map((unit) => unit.id), units.map((_, index) => `u${index + 1}`));
+});
+
+test('rejects missing textual evidence and oversized indivisible lines', () => {
+  assert.throws(() => buildReviewUnits({ githubFiles: [{ filename: 'lost.js', status: 'modified' }], rawDiff: '', directEvidence: [] }), /Review evidence incomplete/);
+  assert.throws(() => buildReviewUnits({ githubFiles: [{ filename: 'large.js', status: 'modified', patch: `@@ -1 +1 @@\n+${'x'.repeat(20_001)}` }], rawDiff: '', directEvidence: [] }), /Review evidence incomplete/);
+  assert.throws(() => packReviewBatches([{ id: 'u1', path: 'large.js', views: ['pr'], evidence: 'x'.repeat(20_001) }]), /Review evidence incomplete/);
+});
+
+test('splits long patches at complete hunks or lines and packs without loss', () => {
+  const first = `@@ -1 +1 @@\n-${'a'.repeat(9_000)}\n+${'b'.repeat(9_000)}`;
+  const second = `@@ -3 +3 @@\n-${'c'.repeat(9_000)}\n+${'d'.repeat(9_000)}`;
+  const units = buildReviewUnits({ githubFiles: [{ filename: 'long.js', status: 'modified', patch: `${first}\n${second}` }], rawDiff: '', directEvidence: [] });
+  assert.ok(units.length > 1);
+  assert.ok(units.every((unit) => unit.path === 'long.js' && unit.views[0] === 'pr' && unit.evidence.length <= 20_000));
+  const batches = packReviewBatches(units);
+  assert.deepEqual(batches.flatMap((batch) => batch.ids), units.map((unit) => unit.id));
+  assert.ok(batches.every((batch) => batch.evidence.length <= 20_000));
+  assert.match(batches.map((batch) => batch.evidence).join(''), /\+b{9000}/);
+  assert.match(batches.map((batch) => batch.evidence).join(''), /\+d{9000}/);
+});
+
+test('rejects evidence needing a ninth batch', () => {
+  const units = Array.from({ length: 9 }, (_, index) => ({ id: `u${index + 1}`, path: `${index}.js`, views: ['pr'], evidence: 'x'.repeat(20_000) }));
+  assert.throws(() => packReviewBatches(units), /Review evidence incomplete: batch limit/);
+});
+
+test('bounds complete diff lines by their escaped size before packing', () => {
+  assert.throws(() => buildReviewUnits({
+    githubFiles: [{ filename: 'angle.js', status: 'modified', patch: `@@ -0,0 +1 @@\n+${'<'.repeat(5_000)}` }], rawDiff: '', directEvidence: [],
+  }), /Review evidence incomplete: oversized diff line/);
+});
+
+test('rejects an empty textual patch instead of listing a file without evidence', () => {
+  assert.throws(() => buildReviewUnits({
+    githubFiles: [{ filename: 'empty.js', status: 'modified', patch: '' }], rawDiff: '', directEvidence: [],
+  }), /Review evidence incomplete: missing textual evidence/);
+});
+
+test('line split retains the old and new source positions', () => {
+  const patch = `@@ -10,2 +10,2 @@\n-${'a'.repeat(9_000)}\n+${'b'.repeat(9_000)}\n ${'c'.repeat(9_000)}`;
+  const units = buildReviewUnits({ githubFiles: [{ filename: 'line-split.js', status: 'modified', patch }], rawDiff: '', directEvidence: [] });
+  assert.equal(units.length, 2);
+  assert.match(units[0].evidence, /@@ -10,1 \+10,1 @@/);
+  assert.match(units[1].evidence, /@@ -11,1 \+11,1 @@/);
+  assert.match(units[1].evidence, / c{9000}/);
+});
+
+test('split units repeat both view labels for a shared path', () => {
+  const patch = `@@ -1 +1 @@\n-${'a'.repeat(9_000)}\n+${'b'.repeat(9_000)}`;
+  const units = buildReviewUnits({
+    githubFiles: [{ filename: 'shared.js', status: 'modified', patch }],
+    rawDiff: '', directEvidence: [{ path: 'shared.js', status: 'M', patch }],
+  });
+  assert.equal(units.length, 2);
+  assert.ok(units.every((unit) => unit.path === 'shared.js' && unit.views.join(',') === 'pr,base_head'));
 });
