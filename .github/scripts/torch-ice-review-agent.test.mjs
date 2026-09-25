@@ -400,3 +400,16 @@ test('batch dispatch preserves framework pair classification across split batche
   assert.equal(agent.selectBatchReviewMode([files[0]], files), 'framework-assessment');
   assert.equal(agent.selectBatchReviewMode([files[2]], files), 'general');
 });
+
+test('rejects PEM spans split across review units before preparing any model evidence', () => {
+  assert.equal(typeof agent.prepareReviewUnits, 'function');
+  const patch = `@@ -0,0 +1,4 @@\n+${'x'.repeat(19_000)}\n+-----BEGIN PRIVATE KEY-----\n+${'secret'.repeat(1_500)}\n+-----END PRIVATE KEY-----`;
+  assert.throws(() => agent.prepareReviewUnits({ githubFiles: [{ filename: 'key.txt', status: 'added', patch }], rawDiff: '', directEvidence: [] }), /Review evidence incomplete: sensitive span/);
+  const completePatch = '@@ -0,0 +1,3 @@\n+-----BEGIN PRIVATE KEY-----\n+secret\n+-----END PRIVATE KEY-----';
+  const complete = agent.prepareReviewUnits({ githubFiles: [{ filename: 'key.txt', status: 'added', patch: completePatch }], rawDiff: '', directEvidence: [] });
+  assert.match(complete[0].evidence, /REDACTED/);
+  assert.doesNotMatch(complete[0].evidence, /secret|PRIVATE KEY/);
+  for (const marker of ['-----BEGIN PRIVATE KEY-----', '-----END RSA PRIVATE KEY-----']) {
+    assert.throws(() => agent.prepareReviewUnits({ githubFiles: [], rawDiff: '', directEvidence: [{ path: 'partial.pem', status: 'A', patch: `@@ -0,0 +1 @@\n+${marker}` }] }), /Review evidence incomplete: sensitive span/);
+  }
+});

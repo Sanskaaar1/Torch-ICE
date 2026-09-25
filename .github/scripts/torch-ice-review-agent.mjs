@@ -180,6 +180,18 @@ export function redactSensitiveText(value) {
   return { text, count };
 }
 
+export function prepareReviewUnits(evidence) {
+  return buildReviewUnits(evidence).map((unit) => {
+    const { text } = redactSensitiveText(unit.evidence);
+    // A leftover PEM boundary may belong to a key split across units. Reject
+    // before requesting any batch rather than exposing an unredacted fragment.
+    if (/-----(?:BEGIN|END)(?: [A-Z]+)? PRIVATE KEY-----/.test(text)) {
+      throw new Error('Review evidence incomplete: sensitive span crosses a unit boundary or is incomplete.');
+    }
+    return { ...unit, evidence: escapeUntrustedSection(text) };
+  });
+}
+
 export function sanitizeReviewOutput(value) {
   const output = String(value ?? '').trim()
     .replace(/<!--\s*torch-ice-review-agent:[\s\S]*?-->/gi, '')
@@ -640,9 +652,7 @@ async function main() {
     const deadline = started + REVIEW_DEADLINE_MS;
     const snapshots = { base: process.env.PR_BASE_CHECKOUT_PATH, head: process.env.PR_CHECKOUT_PATH };
     const directEvidence = await collectDirectEvidence({ baseRoot: snapshots.base, headRoot: snapshots.head, baseSha, headSha });
-    const units = buildReviewUnits({ githubFiles: files, rawDiff, directEvidence }).map((unit) => ({
-      ...unit, evidence: escapeUntrustedSection(redactSensitiveText(unit.evidence).text),
-    }));
+    const units = prepareReviewUnits({ githubFiles: files, rawDiff, directEvidence });
     const batches = packReviewBatches(units);
     const evidenceById = new Map(units.map((unit) => [unit.id, unit.evidence]));
     const normalizedFiles = [
