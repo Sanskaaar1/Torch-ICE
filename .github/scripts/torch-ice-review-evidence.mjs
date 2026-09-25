@@ -150,11 +150,12 @@ export function buildReviewUnits({ githubFiles, rawDiff, directEvidence }) {
   const units = [];
   for (const [filePath, sources] of [...paths].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
     let evidence = '';
-    const views = [...new Set(sources.map((source) => source.view))];
-    const emit = () => { if (evidence) units.push({ id: `u${units.length + 1}`, path: filePath, views, evidence }); evidence = ''; };
+    let views = [];
+    const emit = () => { if (evidence) units.push({ id: `u${units.length + 1}`, path: filePath, views, evidence }); evidence = ''; views = []; };
     for (const source of sources) {
       for (const piece of sourcePieces(source.label, String(source.patch))) {
         if (evidence && escapedLength(`${evidence}\n\n${piece}`) > UNIT_LIMIT) emit();
+        if (!views.includes(source.view)) views.push(source.view);
         evidence += `${evidence ? '\n\n' : ''}${piece}`;
       }
     }

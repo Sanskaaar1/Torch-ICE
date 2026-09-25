@@ -1,4 +1,5 @@
 import test from 'node:test';
+import * as agent from './torch-ice-review-agent.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -339,4 +340,63 @@ test('history retains prior successful bot findings only as lower-priority conte
     { id: 1, body: 'old finding\n<!-- torch-ice-review-agent: success head_sha=abc -->', user: { login: 'github-actions[bot]' }, created_at: '2026-01-02T00:00:00Z' },
   ] });
   assert.equal(result.included[0].botFinding, true);
+});
+
+const batchU1 = { ids: ['u1'], evidence: 'PR diff: src/a.js', units: [{ id: 'u1', path: 'src/a.js', views: ['pr'] }] };
+const completeBatch = { reviewed_unit_ids: ['u1'], findings: [] };
+const batchFinding = { unit_ids: ['u1'], category: 'general', view: 'pr', path: 'src/a.js', location: 'line 1', evidence: 'changed call', impact: 'fails', fix: 'guard it' };
+
+test('batch validation requires exact ID accounting and matching finding provenance', () => {
+  assert.equal(typeof agent.validateBatchResult, 'function');
+  assert.deepEqual(agent.validateBatchResult(completeBatch, batchU1), []);
+  assert.deepEqual(agent.validateBatchResult({ ...completeBatch, findings: [batchFinding] }, batchU1), [batchFinding]);
+  for (const ids of [[], ['u1', 'u1'], ['u2'], ['u1', 'u2']]) {
+    assert.throws(() => agent.validateBatchResult({ ...completeBatch, reviewed_unit_ids: ids }, batchU1), /Review evidence incomplete/);
+  }
+  for (const finding of [null, { ...batchFinding, unit_ids: [] }, { ...batchFinding, unit_ids: ['u2'] }, { ...batchFinding, path: 'other.js' }, { ...batchFinding, view: 'base_head' }, { ...batchFinding, fix: '' }, { ...batchFinding, category: 'unknown' }]) {
+    assert.throws(() => agent.validateBatchResult({ ...completeBatch, findings: [finding] }, batchU1), /Review evidence incomplete/);
+  }
+});
+
+test('batch review retries once, runs sequentially, and enforces the shared deadline', async () => {
+  assert.equal(typeof agent.reviewBatches, 'function');
+  const calls = [];
+  const findings = await agent.reviewBatches([batchU1, batchU1], async (batch, attempt) => {
+    calls.push(attempt);
+    return attempt === 0 ? { reviewed_unit_ids: [], findings: [] } : { ...completeBatch, findings: [batchFinding] };
+  }, Date.now() + 60_000);
+  assert.deepEqual(calls, [0, 1, 0, 1]);
+  assert.equal(findings.length, 2);
+  let failures = 0;
+  await assert.rejects(agent.reviewBatches([batchU1], async () => { failures++; throw new Error('Review evidence incomplete: invalid JSON.'); }, Date.now() + 60_000), /Review evidence incomplete/);
+  assert.equal(failures, 2);
+  await assert.rejects(agent.reviewBatches([batchU1], async () => { throw new Error('must not call'); }, 0), /Review evidence incomplete: deadline/);
+});
+
+test('batch response parsing rejects refusal, incomplete output, and malformed JSON', () => {
+  assert.equal(typeof agent.parseBatchResponse, 'function');
+  const good = { status: 'completed', output_text: JSON.stringify(completeBatch) };
+  assert.deepEqual(agent.parseBatchResponse(good), completeBatch);
+  for (const response of [{ ...good, status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } }, { ...good, output_text: '{' }, { ...good, output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'no' }] }] }]) {
+    assert.throws(() => agent.parseBatchResponse(response), /Review evidence incomplete/);
+  }
+});
+
+test('complete batch evidence is never truncated or escaped twice', () => {
+  const batchEvidence = '&lt;unit&gt;' + 'x'.repeat(170_000) + 'EVIDENCE_END';
+  const result = buildReviewInput({ pr: { number: 1 }, files: [], history: [], batchEvidence });
+  assert.ok(result.input.includes(batchEvidence));
+  assert.equal(result.truncated, false);
+  assert.throws(() => buildReviewInput({ pr: { number: 1 }, files: [], history: [], batchEvidence: 'x'.repeat(256_000) }), /fixed section budgets/);
+});
+
+test('batch dispatch preserves framework pair classification across split batches', () => {
+  assert.equal(typeof agent.selectBatchReviewMode, 'function');
+  const files = [
+    { filename: 'frameworks/new/EVAL.md', status: 'added' },
+    { filename: 'frameworks/new/checklist.md', status: 'added' },
+    { filename: 'frameworks/unrelated/EVAL.md', status: 'added' },
+  ];
+  assert.equal(agent.selectBatchReviewMode([files[0]], files), 'framework-assessment');
+  assert.equal(agent.selectBatchReviewMode([files[2]], files), 'general');
 });

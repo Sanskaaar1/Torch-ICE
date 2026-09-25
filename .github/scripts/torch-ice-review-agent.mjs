@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises';
+import { buildReviewUnits, collectDirectEvidence, packReviewBatches } from './torch-ice-review-evidence.mjs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const TRUSTED = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 const HISTORY_MAX_ITEMS = 30;
 const HISTORY_MAX_CHARS = 32_000;
-const DIFF_MAX_CHARS = 160_000;
 const COMMAND_MAX_CHARS = 2_000;
 const PR_TITLE_MAX_CHARS = 2_000;
 const PR_BODY_MAX_CHARS = 8_000;
@@ -55,6 +55,58 @@ const EXPLORATION_TOOLS = [
   },
 ];
 
+const FINDING_PROPERTIES = {
+  unit_ids: { type: 'array', items: { type: 'string' } },
+  category: { type: 'string', enum: ['general', 'framework'] },
+  view: { type: 'string', enum: ['pr', 'base_head'] },
+  ...Object.fromEntries(['path', 'location', 'evidence', 'impact', 'fix'].map((key) => [key, { type: 'string' }])),
+};
+export const BATCH_RESULT_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['reviewed_unit_ids', 'findings'],
+  properties: {
+    reviewed_unit_ids: { type: 'array', items: { type: 'string' } },
+    findings: { type: 'array', items: { type: 'object', additionalProperties: false, required: Object.keys(FINDING_PROPERTIES), properties: FINDING_PROPERTIES } },
+  },
+};
+
+export function validateBatchResult(result, batch) {
+  const invalid = () => { throw new Error('Review evidence incomplete: invalid batch result.'); };
+  const ids = result?.reviewed_unit_ids;
+  if (!Array.isArray(ids) || ids.length !== batch.ids.length || new Set(ids).size !== ids.length || ids.some((id) => !batch.ids.includes(id)) || !Array.isArray(result.findings)) invalid();
+  if (Object.keys(result).some((key) => !['reviewed_unit_ids', 'findings'].includes(key))) invalid();
+  for (const finding of result.findings) {
+    if (!finding || Object.keys(finding).length !== Object.keys(FINDING_PROPERTIES).length || !Array.isArray(finding.unit_ids) || !finding.unit_ids.length || new Set(finding.unit_ids).size !== finding.unit_ids.length || finding.unit_ids.some((id) => !batch.ids.includes(id))) invalid();
+    if (!['general', 'framework'].includes(finding.category) || !['pr', 'base_head'].includes(finding.view)) invalid();
+    if (!['path', 'location', 'evidence', 'impact', 'fix'].every((key) => typeof finding[key] === 'string' && finding[key].trim())) invalid();
+    if (!batch.units.some((unit) => finding.unit_ids.includes(unit.id) && unit.path === finding.path && unit.views.includes(finding.view))) invalid();
+  }
+  return result.findings;
+}
+
+export function parseBatchResponse(response) {
+  if (response?.status !== 'completed' || response.output?.some((item) => item.content?.some((part) => part.type === 'refusal'))) {
+    throw new Error('Review evidence incomplete: batch response did not complete or was refused.');
+  }
+  try { return JSON.parse(extractResponseText(response)); }
+  catch { throw new Error('Review evidence incomplete: invalid batch JSON.'); }
+}
+
+export async function reviewBatches(batches, requestBatch, deadline) {
+  const findings = [];
+  for (const batch of batches) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (Date.now() >= deadline) throw new Error('Review evidence incomplete: deadline.');
+      try {
+        const result = await requestBatch(batch, attempt);
+        if (Date.now() >= deadline) throw new Error('Review evidence incomplete: deadline.');
+        findings.push(...validateBatchResult(result, batch));
+        break;
+      } catch (error) { if (attempt === 1) throw error; }
+    }
+  }
+  return findings;
+}
+
 export function parseReviewCommand(body = '') {
   const match = /(?:^|\r?\n)[ \t]*@torch-ice-review-agent(?=$|[ \t])(?:[ \t]*(.*))?/.exec(body);
   if (!match) return null;
@@ -85,6 +137,14 @@ export function selectReviewMode(files = []) {
   return [...addedFrameworkFiles.values()].some((filesForFramework) => filesForFramework.has('EVAL') && filesForFramework.has('checklist'))
     ? 'framework-assessment'
     : 'general';
+}
+
+export function selectBatchReviewMode(batchFiles, allFiles) {
+  if (selectReviewMode(batchFiles) === 'framework-assessment') return 'framework-assessment';
+  return batchFiles.some((file) => {
+    const match = /^frameworks\/([^/]+)\/(EVAL|checklist)\.md$/.exec(changedPath(file));
+    return match && file.status === 'added' && selectReviewMode(allFiles.filter((candidate) => changedPath(candidate).startsWith(`frameworks/${match[1]}/`))) === 'framework-assessment';
+  }) ? 'framework-assessment' : 'general';
 }
 
 export function isSuccessfulReviewResult(comment, headSha) {
@@ -161,7 +221,7 @@ function escapeUntrustedSection(value) {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export function buildReviewInput({ commandPrompt, pr, headSha, files, fileContext = '', diff, history, checklist, reviewMode = 'general' }) {
+export function buildReviewInput({ commandPrompt, pr, headSha, files, fileContext = '', diff, batchEvidence, history, checklist, reviewMode = 'general' }) {
   const raw = {
     command: String(commandPrompt ?? '') || '(No additional prompt.)',
     metadata: JSON.stringify({ number: pr.number, title: truncate(pr.title, PR_TITLE_MAX_CHARS), body: truncate(pr.body, PR_BODY_MAX_CHARS), head_sha: headSha }),
@@ -174,7 +234,7 @@ export function buildReviewInput({ commandPrompt, pr, headSha, files, fileContex
   const values = {
     command: truncate(escaped.command, COMMAND_MAX_CHARS), metadata: truncate(escaped.metadata, METADATA_MAX_CHARS),
     files: truncate(escaped.files, FILES_MAX_CHARS), history: truncate(escaped.history, HISTORY_MAX_CHARS),
-    fileContext: truncate(escaped.fileContext, FILE_CONTEXT_MAX_CHARS), diff: truncate(escaped.diff, DIFF_MAX_CHARS),
+    fileContext: truncate(escaped.fileContext, FILE_CONTEXT_MAX_CHARS), diff: batchEvidence === undefined ? escaped.diff : String(batchEvidence),
     checklist: reviewMode === 'framework-assessment' ? String(checklist ?? '') : '',
   };
   const section = (tag, value) => `<${tag}>\n${value}\n</${tag}>`;
@@ -187,7 +247,7 @@ export function buildReviewInput({ commandPrompt, pr, headSha, files, fileContex
     section('untrusted_review_history', values.history), section('untrusted_pr_diff', values.diff)];
   const input = parts.join('\n\n');
   if (input.length > INPUT_MAX_CHARS) throw new Error('Review input exceeded its fixed section budgets.');
-  return { input, truncated: Object.keys(raw).some((key) => values[key] !== escaped[key]) };
+  return { input, truncated: Object.keys(raw).some((key) => key !== 'diff' && values[key] !== escaped[key]) };
 }
 
 export function shouldRetryForOutputLimit(response) {
@@ -545,7 +605,6 @@ async function main() {
     verifyCheckoutShas({ baseSha, headSha: checkedOutHeadSha, pr });
     const rawDiff = await diffResponse.text();
     if (files.length > 0 && !rawDiff.trim()) throw new Error('GitHub reported changed files but returned no diff.');
-    const diff = truncate(rawDiff, DIFF_MAX_CHARS);
     const blockedLabel = (pr.labels ?? []).map((label) => String(label.name ?? '').toLowerCase()).find((name) => BLOCKED_LABELS.has(name));
     if (blockedLabel) {
       log('review_rejected', { pr_number: prNumber, reason: 'blocked_label', label: blockedLabel });
@@ -565,7 +624,7 @@ async function main() {
       return;
     }
     const priorSuccess = issueComments.some((comment) => isSuccessfulReviewResult(comment, headSha));
-    log('review_context', { pr_number: prNumber, head_sha: headSha, changed_files: files.length, diff_characters_received: rawDiff.length, diff_characters_sent: diff.length, diff_truncated: diff.length !== rawDiff.length, deduplication_skipped: priorSuccess && !command.force });
+    log('review_context', { pr_number: prNumber, head_sha: headSha, changed_files: files.length, diff_characters_received: rawDiff.length, deduplication_skipped: priorSuccess && !command.force });
     if (priorSuccess && !command.force) {
       await postComment(api, prNumber, formatDeduplicationComment(headSha));
       return;
@@ -577,53 +636,62 @@ async function main() {
       fs.readFile(path.join(process.cwd(), '.github/prompts/architecture-review-checklist.md'), 'utf8'),
     ]);
     if (!process.env.OPENAI_API_KEY) throw new Error('The OpenAI API key is not configured.');
-    const reviewMode = selectReviewMode(files);
-    const fileContext = await readFileContext(process.env.PR_CHECKOUT_PATH, files);
-    const reviewInput = buildReviewInput({ commandPrompt: command.prompt, pr, headSha, files, fileContext, diff, history: history.included, checklist, reviewMode });
-    const { text: input, count: redactions } = redactSensitiveText(reviewInput.input);
-    log('review_input', { pr_number: prNumber, review_mode: reviewMode, input_characters: input.length, input_budget_characters: INPUT_MAX_CHARS, file_context_characters: fileContext.length, truncated: reviewInput.truncated, redactions });
     const started = Date.now();
     const deadline = started + REVIEW_DEADLINE_MS;
-    // The previous output-limit retry permitted at most two exploration runs.
+    const snapshots = { base: process.env.PR_BASE_CHECKOUT_PATH, head: process.env.PR_CHECKOUT_PATH };
+    const directEvidence = await collectDirectEvidence({ baseRoot: snapshots.base, headRoot: snapshots.head, baseSha, headSha });
+    const units = buildReviewUnits({ githubFiles: files, rawDiff, directEvidence }).map((unit) => ({
+      ...unit, evidence: escapeUntrustedSection(redactSensitiveText(unit.evidence).text),
+    }));
+    const batches = packReviewBatches(units);
+    const evidenceById = new Map(units.map((unit) => [unit.id, unit.evidence]));
+    const normalizedFiles = [
+      ...files.flatMap((file) => [file, ...(file.previous_filename ? [{ ...file, filename: file.previous_filename }] : [])]),
+      ...directEvidence.map((item) => ({ filename: item.path, status: item.status === 'A' ? 'added' : 'modified' })),
+    ];
+    // All attempts and batches share the original aggregate exploration limits.
     const explorationBudget = { calls: 0, characters: 0 };
-    const correction = `\n\nYour previous response omitted or left empty a required section. Return a complete review with a nonempty ## General Review section${reviewMode === 'framework-assessment' ? ` and a nonempty ## Framework Assessment Review: PR #${prNumber} section` : ''}. Preserve evidenced findings and the problems-only convention.`;
-    const requestReview = async (requestInput, maxOutputTokens, corrected, { toolChoice = 'auto' } = {}) => {
-      try {
-        return await fetch('https://api.openai.com/v1/responses', { method: 'POST', signal: AbortSignal.timeout(reviewRequestTimeoutMs(deadline)), headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'gpt-5.6-terra', text: { verbosity: 'medium' }, max_output_tokens: maxOutputTokens, store: false, instructions: corrected ? instructions + correction : instructions, tools: EXPLORATION_TOOLS, tool_choice: toolChoice, parallel_tool_calls: false, input: requestInput }) });
-      } catch (error) {
-        if (error?.name === 'TimeoutError') throw new Error('OpenAI request timed out.');
-        throw error;
-      }
-    };
-    const explore = async (maxOutputTokens, corrected) => runExplorationLoop(async (requestInput, options) => {
-      const response = await requestReview(requestInput, maxOutputTokens, corrected, options);
-      if (!response.ok) throw new Error(`OpenAI request failed (${response.status}).`);
-      return response.json();
-    }, input, { base: process.env.PR_BASE_CHECKOUT_PATH, head: process.env.PR_CHECKOUT_PATH }, explorationBudget);
-    const output = await reviewWithSectionRetry(async (corrected) => {
-      if (corrected) log('openai_retry', { pr_number: prNumber, reason: 'missing_required_sections' });
-      let exploration = await explore(INITIAL_MAX_OUTPUT_TOKENS, corrected);
-      let result = exploration.response;
-      if (shouldRetryForOutputLimit(result)) {
-        log('openai_retry', { pr_number: prNumber, reason: result.incomplete_details.reason, max_output_tokens: RETRY_MAX_OUTPUT_TOKENS });
-        exploration = await explore(RETRY_MAX_OUTPUT_TOKENS, corrected);
-        result = exploration.response;
-      }
-      const extracted = extractResponseText(result);
-      log('openai_response', {
-        latency_ms: Date.now() - started,
-        status: result.status ?? null,
-        output_items: Array.isArray(result.output) ? result.output.length : 0,
-        exploration_tool_calls: exploration.calls,
-        exploration_characters_sent: exploration.characters,
-        extracted_text_characters: extracted.length,
-        incomplete_details: result.incomplete_details ?? null,
-        usage: result.usage ?? null,
-      });
-      if (result.status !== 'completed') throw new Error('OpenAI response did not complete.');
-      return extracted;
-    }, { reviewMode, prNumber });
-    await postSuccessComment(api, prNumber, `${output}\n\n${BOT_MARKER}${headSha}${command.force ? ' attempt=force' : ''} -->`, baseSha, headSha);
+    const findings = await reviewBatches(batches, async (batch, attempt) => {
+      const paths = new Set(batch.units.map((unit) => unit.path));
+      const batchFiles = normalizedFiles.filter((file) => paths.has(file.filename));
+      // Classify paired EVAL/checklist additions together even across batches.
+      const reviewMode = selectBatchReviewMode(batchFiles, normalizedFiles);
+      const fileContext = await readFileContext(snapshots.head, batchFiles);
+      const reviewInput = buildReviewInput({ commandPrompt: command.prompt, pr, headSha, files: batchFiles, fileContext,
+        batchEvidence: batch.evidence, history: history.included, checklist, reviewMode });
+      let evidenceOffset = 0;
+      const manifest = escapeUntrustedSection(JSON.stringify(batch.units.map((unit) => {
+        const start = evidenceOffset;
+        evidenceOffset += evidenceById.get(unit.id).length;
+        const assigned = { ...unit, evidence_start: start, evidence_end: evidenceOffset };
+        evidenceOffset += 2; // The packer joins complete units with two newlines.
+        return assigned;
+      })));
+      const input = redactSensitiveText(`${reviewInput.input}\n\n<untrusted_assigned_units>\n${manifest}\n</untrusted_assigned_units>`).text;
+      if (input.length > INPUT_MAX_CHARS) throw new Error('Review input exceeded its fixed section budgets.');
+      const batchInstructions = `${instructions}\n\nTrusted stage: batch. Return only the review_batch JSON object. Review every assigned unit ID exactly once. Apply General Review to all assigned evidence and the architecture checklist when the dispatch selects framework-assessment. The manifest identifies each unit's start-inclusive, end-exclusive character offsets within the supplied escaped diff section. Each finding must cite assigned unit IDs and an assigned path and view. Return empty findings when there are no evidenced defects. Do not write final Markdown sections.${attempt ? ' The previous attempt failed validation; return a complete valid batch result.' : ''}`;
+      const exploration = await runExplorationLoop(async (requestInput, { toolChoice = 'auto' } = {}) => {
+        let response;
+        try {
+          response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', signal: AbortSignal.timeout(reviewRequestTimeoutMs(deadline)), headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({
+            model: 'gpt-5.6-terra', text: { format: { type: 'json_schema', name: 'review_batch', strict: true, schema: BATCH_RESULT_SCHEMA }, verbosity: 'medium' },
+            max_output_tokens: attempt ? RETRY_MAX_OUTPUT_TOKENS : INITIAL_MAX_OUTPUT_TOKENS, store: false, instructions: batchInstructions,
+            tools: EXPLORATION_TOOLS, tool_choice: toolChoice, parallel_tool_calls: false, input: requestInput,
+          }) });
+        } catch (error) {
+          if (error?.name === 'TimeoutError') throw new Error('OpenAI request timed out.');
+          throw error;
+        }
+        if (!response.ok) throw new Error(`OpenAI request failed (${response.status}).`);
+        return response.json();
+      }, input, snapshots, explorationBudget);
+      log('openai_batch_response', { unit_ids: batch.ids, attempt, latency_ms: Date.now() - started, status: exploration.response.status,
+        exploration_tool_calls: exploration.calls, exploration_characters_sent: exploration.characters, usage: exploration.response.usage ?? null });
+      return parseBatchResponse(exploration.response);
+    }, deadline);
+    log('review_batches_complete', { batches: batches.length, units: units.length, findings: findings.length });
+    // Task 4 supplies consolidation and the complete-coverage posting boundary.
+    throw new Error('Review evidence incomplete: final consolidation is not implemented.');
   } catch (error) {
     await reportFailure({ api, prNumber, repository: event.repository, error, headSha, force: command.force });
     process.exitCode = 1;

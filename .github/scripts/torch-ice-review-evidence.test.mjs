@@ -158,14 +158,19 @@ test('line split retains the old and new source positions', () => {
   assert.match(units[1].evidence, / c{9000}/);
 });
 
-test('split units repeat both view labels for a shared path', () => {
+test('split units advertise only views present in their evidence', () => {
   const patch = `@@ -1 +1 @@\n-${'a'.repeat(9_000)}\n+${'b'.repeat(9_000)}`;
   const units = buildReviewUnits({
     githubFiles: [{ filename: 'shared.js', status: 'modified', patch }],
     rawDiff: '', directEvidence: [{ path: 'shared.js', status: 'M', patch }],
   });
   assert.equal(units.length, 2);
-  assert.ok(units.every((unit) => unit.path === 'shared.js' && unit.views.join(',') === 'pr,base_head'));
+  assert.ok(units.every((unit) => unit.path === 'shared.js'));
+  assert.deepEqual(units.map((unit) => unit.views), [['pr'], ['base_head']]);
+  assert.match(units[0].evidence, /PR diff/);
+  assert.doesNotMatch(units[0].evidence, /current base to head/);
+  assert.match(units[1].evidence, /current base to head/);
+  assert.doesNotMatch(units[1].evidence, /PR diff/);
 });
 
 test('uses complete raw textual evidence when the GitHub hunk is incomplete', () => {
