@@ -29,7 +29,7 @@ export async function collectDirectEvidence({ baseRoot, headRoot, baseSha, headS
     const evidence = [];
     for (let index = 0; index < tokens.length; index += 2) {
       const [status, filePath] = tokens.slice(index, index + 2);
-      const patch = await git(baseRoot, [...DIFF_ARGS, '--patch', baseSha, headSha, '--', filePath], env);
+      const patch = await git(baseRoot, [...DIFF_ARGS, '--patch', baseSha, headSha, '--', `:(literal)${filePath}`], env);
       evidence.push({ path: filePath, status, patch: patch.stdout.toString('utf8') });
     }
     return evidence;

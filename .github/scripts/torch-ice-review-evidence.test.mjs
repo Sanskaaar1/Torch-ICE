@@ -51,3 +51,40 @@ test('includes a current-base deletion hidden by the merge-base PR diff', async 
     await fs.rm(root, { recursive: true, force: true });
   }
 });
+
+test('collects the patch for a filename containing pathspec syntax', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'torch-ice-review-evidence-path-'));
+  const seed = path.join(root, 'seed');
+  const baseRoot = path.join(root, 'base');
+  const headRoot = path.join(root, 'head');
+  try {
+    await fs.mkdir(seed);
+    await git(seed, 'init', '-q', '-b', 'main');
+    await git(seed, 'config', 'user.name', 'Review Test');
+    await git(seed, 'config', 'user.email', 'review-test@example.com');
+    await fs.writeFile(path.join(seed, 'README.md'), 'initial\n');
+    await git(seed, 'add', 'README.md');
+    await git(seed, 'commit', '-qm', 'initial');
+    const baseSha = await git(seed, 'rev-parse', 'HEAD');
+    await fs.writeFile(path.join(seed, 'a[1].txt'), 'literal filename\n');
+    await fs.writeFile(path.join(seed, 'a1.txt'), 'other filename\n');
+    await git(seed, 'add', '--all');
+    await git(seed, 'commit', '-qm', 'add bracketed filename');
+    const headSha = await git(seed, 'rev-parse', 'HEAD');
+
+    for (const [checkout, sha] of [[baseRoot, baseSha], [headRoot, headSha]]) {
+      await fs.mkdir(checkout);
+      await git(checkout, 'init', '-q');
+      await git(checkout, 'fetch', '-q', '--depth=1', seed, sha);
+      await git(checkout, 'checkout', '-q', 'FETCH_HEAD');
+    }
+
+    const evidence = await collectDirectEvidence({ baseRoot, headRoot, baseSha, headSha });
+    const file = evidence.find((item) => item.path === 'a[1].txt');
+    assert.equal(file?.status, 'A');
+    assert.match(file.patch, /\+literal filename/);
+    assert.doesNotMatch(file.patch, /other filename/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
