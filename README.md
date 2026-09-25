@@ -239,8 +239,10 @@ views: the GitHub PR diff and the current base directly against the PR head,
 including direct-only paths that can expose stale-branch regressions. Textual
 evidence includes lockfiles, vendor code, build logic, generated artifacts,
 and SVGs; binary-change metadata is retained. Complete evidence units are
-packed into at most eight batches totaling 160,000 characters. Each request
-uses fixed section budgets under a 256,000-character ceiling (about 64k tokens).
+packed into at most eight batches of up to 20,000 characters each, totaling
+at most 160,000 characters. An indivisible evidence unit exceeding the
+20,000-character limit fails the review. Each request uses fixed section
+budgets under a 256,000-character ceiling (about 64k tokens).
 Every unit must be accounted for before a final tools-disabled request groups
 validated findings. The application renders an advisory Markdown review from
 those original findings. Missing evidence, exceeded limits, invalid results,
