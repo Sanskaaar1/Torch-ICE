@@ -90,7 +90,7 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
   const deadline = Date.now() + 14 * 60_000;
   const started = Date.now();
   const explorationBudget = { calls: 0, characters: 0 };
-  const findings = await reviewBatches(batches, async (batch, attempt, retryReason, retryDraft) => {
+  const findings = await reviewBatches(batches, async (batch, attempt, retryReason, retryDraft, kept) => {
     const paths = new Set(batch.units.map((unit) => unit.path));
     const batchFiles = files.filter((file) => paths.has(file.filename));
     const assessmentFiles = batchFiles.filter((file) => /\/(?:EVAL|checklist)\.md$/.test(file.filename));
@@ -115,8 +115,9 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
       if (result && String(error.message).startsWith('Review evidence incomplete:')) error.reviewDraft = result;
       if (result && String(error.message).startsWith('Review evidence incomplete:')) {
         const partial = await verifiedPartialFindings(result, batch, snapshots);
-        if (partial.length) {
-          try { error.partialMarkdown = renderFindings({ findings: partial, pr: { number: 9 }, reviewMode }); }
+        error.verifiedFindings = partial;
+        if (kept.length || partial.length) {
+          try { error.partialMarkdown = renderFindings({ findings: [...kept, ...partial], pr: { number: 9 }, reviewMode }); }
           catch { /* Preserve the original validation error. */ }
         }
       }

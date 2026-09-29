@@ -246,9 +246,10 @@ evidence unit. Changed-line citations and supporting snapshot quotes are
 checked against pinned evidence. The application removes exact duplicates,
 sorts findings by severity, and renders
 the advisory Markdown. Missing evidence and exceeded limits produce a failure
-comment. If either attempt has independently verified findings but the review
-still fails, the failure comment can include verified findings after a fresh
-base/head check while stating that the review is incomplete.
+comment. A citation retry receives rejected findings while verified first-pass
+findings are retained. If either attempt has independently verified findings
+but the review still fails, the failure comment can include verified findings
+after a fresh base/head check while stating that the review is incomplete.
 The base and head SHAs are checked again immediately before posting success.
 
 Review-quality fixtures can be checked locally with

@@ -587,12 +587,15 @@ test('live replay retains verified findings when citation retry still fails', as
     let requests = 0;
     globalThis.fetch = async () => {
       requests++;
-      const output = { reviewed_unit_ids: prepared.batches[0].ids, findings: [valid, { ...valid, evidence: 'invented claim', references: [{ ...valid.references[0], quote: 'invented source' }] }] };
+      const secondValid = { ...valid, evidence: 'second verified issue', impact: 'second impact', fix: 'second fix' };
+      const output = { reviewed_unit_ids: prepared.batches[0].ids, findings: [requests === 1 ? valid : secondValid,
+        { ...valid, evidence: 'invented claim', references: [{ ...valid.references[0], quote: 'invented source' }] }] };
       return { ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify(output), usage: { input_tokens: 1 } }) };
     };
     const checklist = await fs.readFile('.claude/skills/torch-ice-review/checklist.md', 'utf8');
     await assert.rejects(liveTrial(prepared, 'trusted instructions', checklist, []), (error) => {
       assert.match(error.partialMarkdown, /changed call/);
+      assert.match(error.partialMarkdown, /second verified issue/);
       assert.doesNotMatch(error.partialMarkdown, /invented claim/);
       return true;
     });
@@ -624,6 +627,33 @@ test('verified first-pass findings survive a failed citation retry request', asy
       return true;
     });
     assert.equal(requests, 2);
+  } finally { globalThis.fetch = originalFetch; await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('citation retry preserves verified findings while correcting rejected ones', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-retry-preserve-'));
+  const originalFetch = globalThis.fetch;
+  try {
+    const prepared = await prepareFixture('general', root);
+    const unit = prepared.units[0];
+    const quote = unit.evidence.split('\n').find((line) => line.startsWith('+') && !line.startsWith('+++')).slice(1);
+    const valid = { ...batchFinding, unit_ids: [unit.id], path: unit.path,
+      references: [{ ...batchFinding.references[0], unit_id: unit.id, line_start: null, line_end: null, quote }] };
+    const rejected = { ...valid, evidence: 'second issue', impact: 'second impact', fix: 'second fix',
+      references: [{ ...valid.references[0], quote: 'invented source' }] };
+    const corrected = { ...rejected, references: [{ ...valid.references[0] }] };
+    const inputs = [];
+    globalThis.fetch = async (_url, options) => {
+      inputs.push(JSON.parse(options.body).input);
+      const findings = inputs.length === 1 ? [valid, rejected] : [corrected];
+      return { ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify({ reviewed_unit_ids: prepared.batches[0].ids, findings }), usage: { input_tokens: 1 } }) };
+    };
+    const checklist = await fs.readFile('.claude/skills/torch-ice-review/checklist.md', 'utf8');
+    const result = await liveTrial(prepared, 'trusted instructions', checklist, []);
+    assert.equal(result.findings, 2);
+    assert.match(result.markdown, /changed call/);
+    assert.match(result.markdown, /second issue/);
+    assert.doesNotMatch(inputs[1].slice(inputs[1].indexOf('<untrusted_prior_review>')), /changed call/);
   } finally { globalThis.fetch = originalFetch; await fs.rm(root, { recursive: true, force: true }); }
 });
 
