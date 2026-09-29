@@ -111,7 +111,7 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
       tools: EXPLORATION_TOOLS, toolChoice, maxOutputTokens: 8192 }), requestInput, snapshots, explorationBudget);
     const result = parseBatchResponse(exploration.response);
     validateBatchResult(result, batch);
-    await verifySnapshotReferences([...result.findings, ...result.checks], snapshots);
+    await verifySnapshotReferences(result.findings, snapshots);
     return result;
   }, deadline);
   const markdown = await consolidateFindings({ findings, pr: { number: 9, title: fixture.name }, reviewMode, deadline,

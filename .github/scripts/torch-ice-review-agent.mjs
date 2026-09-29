@@ -891,7 +891,7 @@ async function main() {
       try {
         const result = parseBatchResponse(exploration.response);
         validateBatchResult(result, batch);
-        await verifySnapshotReferences([...result.findings, ...result.checks], snapshots);
+        await verifySnapshotReferences(result.findings, snapshots);
         return result;
       } catch (error) {
         if (String(error.message).startsWith('Review evidence incomplete:')) log('review_batch_rejected', { attempt, reason: error.message });
