@@ -373,7 +373,7 @@ test('rejects missing or unresolved checks and findings without changed-line anc
   const check = { id: 'general-correctness', status: 'violation', reason: 'new call fails', references: [anchor], finding_indexes: [0] };
   const valid = { reviewed_unit_ids: ['u1'], checks: [check], findings: [finding] };
   assert.deepEqual(agent.validateBatchResult(valid, batch), [finding]);
-  assert.throws(() => agent.validateBatchResult({ ...valid, checks: [] }, batch), /Review evidence incomplete/);
+  assert.throws(() => agent.validateBatchResult({ ...valid, checks: [] }, batch), /Review evidence incomplete: check coverage/);
   assert.throws(() => agent.validateBatchResult({ ...valid, checks: [{ ...check, status: 'unresolved' }] }, batch), /Review evidence incomplete/);
   assert.throws(() => agent.validateBatchResult({ ...valid, checks: [check, check] }, batch), /Review evidence incomplete/);
   assert.throws(() => agent.validateBatchResult({ ...valid, checks: [{ ...check, references: [] }] }, batch), /Review evidence incomplete/);

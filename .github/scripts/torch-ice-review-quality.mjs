@@ -1,5 +1,5 @@
 const GENERAL_CHECKS = ['correctness', 'regressions', 'security', 'performance'];
-const incomplete = () => { throw new Error('Review evidence incomplete: invalid batch result.'); };
+const incomplete = (reason = 'invalid batch result') => { throw new Error(`Review evidence incomplete: ${reason}.`); };
 const quoted = (text, quote) => text.includes(quote) || text.includes(quote.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'));
 
 export function requiredReviewChecks(checklist, reviewMode) {
@@ -40,45 +40,45 @@ function changedLines(evidence, view, side) {
 }
 
 export function validateReference(ref, finding, batch) {
-  if (!ref || !['diff', 'metadata', 'snapshot'].includes(ref.kind) || typeof ref.quote !== 'string' || !ref.quote.trim() || ref.quote.includes('\n')) incomplete();
+  if (!ref || !['diff', 'metadata', 'snapshot'].includes(ref.kind) || typeof ref.quote !== 'string' || !ref.quote.trim() || ref.quote.includes('\n')) incomplete('reference shape');
   if (ref.kind === 'snapshot') {
-    if (!['base', 'head'].includes(ref.snapshot) || typeof ref.path !== 'string' || !Number.isSafeInteger(ref.line_start) || ref.line_start < 1 || ref.line_end !== ref.line_start || ref.unit_id !== null || ref.view !== null || ref.side !== null) incomplete();
+    if (!['base', 'head'].includes(ref.snapshot) || typeof ref.path !== 'string' || !Number.isSafeInteger(ref.line_start) || ref.line_start < 1 || ref.line_end !== ref.line_start || ref.unit_id !== null || ref.view !== null || ref.side !== null) incomplete('snapshot reference shape');
     return;
   }
   const unit = batch.units.find((entry) => entry.id === ref.unit_id && entry.path === finding.path && entry.views.includes(ref.view));
-  if (!unit || ref.view !== finding.view || ref.snapshot !== null || ref.path !== null || (finding.unit_ids && !finding.unit_ids.includes(ref.unit_id))) incomplete();
+  if (!unit || ref.view !== finding.view || ref.snapshot !== null || ref.path !== null || (finding.unit_ids && !finding.unit_ids.includes(ref.unit_id))) incomplete('reference provenance');
   const evidence = unit.evidence ?? batch.unitEvidence?.[unit.id];
-  if (typeof evidence !== 'string') incomplete();
+  if (typeof evidence !== 'string') incomplete('reference evidence');
   if (ref.kind === 'metadata') {
     const segment = evidence.split(/(?=^Path: )/m).find((part) => part.includes(ref.view === 'pr' ? 'PR diff (' : 'current base to head ('));
     const metadataLine = segment?.split(/\r?\n/).some((line) => /^(?:old mode|new mode|rename from|rename to|similarity index|Binary files|GIT binary patch|new file mode|deleted file mode|index)\b/.test(line) && quoted(line, ref.quote));
-    if (ref.side !== null || ref.line_start !== null || ref.line_end !== null || !segment || /^@@ /m.test(segment) || !metadataLine) incomplete();
+    if (ref.side !== null || ref.line_start !== null || ref.line_end !== null || !segment || /^@@ /m.test(segment) || !metadataLine) incomplete('metadata reference');
     return;
   }
-  if (!['old', 'new'].includes(ref.side) || !Number.isSafeInteger(ref.line_start) || !Number.isSafeInteger(ref.line_end) || ref.line_start < 1 || ref.line_end < ref.line_start || ref.line_end - ref.line_start > 19) incomplete();
+  if (!['old', 'new'].includes(ref.side) || !Number.isSafeInteger(ref.line_start) || !Number.isSafeInteger(ref.line_end) || ref.line_start < 1 || ref.line_end < ref.line_start || ref.line_end - ref.line_start > 19) incomplete('diff reference range');
   const lines = changedLines(evidence, ref.view, ref.side);
-  for (let number = ref.line_start; number <= ref.line_end; number++) if (!lines.some((line) => line.number === number)) incomplete();
-  if (!lines.some((line) => line.number >= ref.line_start && line.number <= ref.line_end && line.changed && quoted(line.text, ref.quote))) incomplete();
+  for (let number = ref.line_start; number <= ref.line_end; number++) if (!lines.some((line) => line.number === number)) incomplete('diff reference lines');
+  if (!lines.some((line) => line.number >= ref.line_start && line.number <= ref.line_end && line.changed && quoted(line.text, ref.quote))) incomplete('diff reference quote');
 }
 
 export function validateQuality(result, batch) {
   const expected = batch.checks.map((check) => check.id);
-  if (!Array.isArray(result.checks) || result.checks.length !== expected.length || new Set(result.checks.map((check) => check?.id)).size !== expected.length) incomplete();
+  if (!Array.isArray(result.checks) || result.checks.length !== expected.length || new Set(result.checks.map((check) => check?.id)).size !== expected.length) incomplete('check coverage');
   for (const check of result.checks) {
-    if (!expected.includes(check.id) || !['pass', 'violation', 'not_applicable', 'unresolved'].includes(check.status) || check.status === 'unresolved' || typeof check.reason !== 'string' || !check.reason.trim() || !Array.isArray(check.finding_indexes) || new Set(check.finding_indexes).size !== check.finding_indexes.length || !Array.isArray(check.references)) incomplete();
-    if (check.finding_indexes.some((index) => !Number.isSafeInteger(index) || index < 0 || index >= result.findings.length)) incomplete();
-    if (check.status === 'violation' ? !check.finding_indexes.length : check.finding_indexes.length) incomplete();
-    if (check.finding_indexes.some((index) => result.findings[index].category !== (check.id.startsWith('general-') ? 'general' : 'framework'))) incomplete();
-    if (check.status !== 'not_applicable' && !check.references.length) incomplete();
+    if (!expected.includes(check.id) || !['pass', 'violation', 'not_applicable', 'unresolved'].includes(check.status) || check.status === 'unresolved' || typeof check.reason !== 'string' || !check.reason.trim() || !Array.isArray(check.finding_indexes) || new Set(check.finding_indexes).size !== check.finding_indexes.length || !Array.isArray(check.references)) incomplete('check disposition');
+    if (check.finding_indexes.some((index) => !Number.isSafeInteger(index) || index < 0 || index >= result.findings.length)) incomplete('check finding index');
+    if (check.status === 'violation' ? !check.finding_indexes.length : check.finding_indexes.length) incomplete('check finding links');
+    if (check.finding_indexes.some((index) => result.findings[index].category !== (check.id.startsWith('general-') ? 'general' : 'framework'))) incomplete('check finding category');
+    if (check.status !== 'not_applicable' && !check.references.length) incomplete('check references');
     for (const ref of check.references) {
       const unit = batch.units.find((entry) => entry.id === ref.unit_id);
       validateReference(ref, { path: unit?.path, view: ref.view }, batch);
     }
   }
-  if (result.findings.some((_, index) => !result.checks.some((check) => check.finding_indexes.includes(index)))) incomplete();
+  if (result.findings.some((_, index) => !result.checks.some((check) => check.finding_indexes.includes(index)))) incomplete('unlinked finding');
   for (const finding of result.findings) {
-    if (!['blocking', 'major', 'minor'].includes(finding.severity) || !Array.isArray(finding.references) || !finding.references.length) incomplete();
+    if (!['blocking', 'major', 'minor'].includes(finding.severity) || !Array.isArray(finding.references) || !finding.references.length) incomplete('finding references');
     for (const ref of finding.references) validateReference(ref, finding, batch);
-    if (!finding.references.some((ref) => ref.kind !== 'snapshot')) incomplete();
+    if (!finding.references.some((ref) => ref.kind !== 'snapshot')) incomplete('finding changed anchor');
   }
 }

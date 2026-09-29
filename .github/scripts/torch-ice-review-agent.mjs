@@ -85,16 +85,16 @@ export const BATCH_RESULT_SCHEMA = {
 export { requiredReviewChecks };
 
 export function validateBatchResult(result, batch) {
-  const invalid = () => { throw new Error('Review evidence incomplete: invalid batch result.'); };
+  const invalid = (reason = 'invalid batch result') => { throw new Error(`Review evidence incomplete: ${reason}.`); };
   const ids = result?.reviewed_unit_ids;
-  if (!Array.isArray(ids) || ids.length !== batch.ids.length || new Set(ids).size !== ids.length || ids.some((id) => !batch.ids.includes(id)) || !Array.isArray(result.findings)) invalid();
-  if (Object.keys(result).some((key) => !['reviewed_unit_ids', 'checks', 'findings'].includes(key))) invalid();
+  if (!Array.isArray(ids) || ids.length !== batch.ids.length || new Set(ids).size !== ids.length || ids.some((id) => !batch.ids.includes(id)) || !Array.isArray(result.findings)) invalid('reviewed unit IDs');
+  if (Object.keys(result).some((key) => !['reviewed_unit_ids', 'checks', 'findings'].includes(key))) invalid('batch fields');
   for (const finding of result.findings) {
-    if (!finding || !Array.isArray(finding.unit_ids) || !finding.unit_ids.length || new Set(finding.unit_ids).size !== finding.unit_ids.length || finding.unit_ids.some((id) => !batch.ids.includes(id))) invalid();
-    if (!['general', 'framework'].includes(finding.category) || !['pr', 'base_head'].includes(finding.view)) invalid();
-    if (!['path', 'evidence', 'impact', 'fix'].every((key) => typeof finding[key] === 'string' && finding[key].trim())) invalid();
-    if (!batch.units.some((unit) => finding.unit_ids.includes(unit.id) && unit.path === finding.path && unit.views.includes(finding.view))) invalid();
-    if (batch.checks && Object.keys(finding).sort().join() !== Object.keys(FINDING_PROPERTIES).sort().join()) invalid();
+    if (!finding || !Array.isArray(finding.unit_ids) || !finding.unit_ids.length || new Set(finding.unit_ids).size !== finding.unit_ids.length || finding.unit_ids.some((id) => !batch.ids.includes(id))) invalid('finding unit IDs');
+    if (!['general', 'framework'].includes(finding.category) || !['pr', 'base_head'].includes(finding.view)) invalid('finding category or view');
+    if (!['path', 'evidence', 'impact', 'fix'].every((key) => typeof finding[key] === 'string' && finding[key].trim())) invalid('finding text fields');
+    if (!batch.units.some((unit) => finding.unit_ids.includes(unit.id) && unit.path === finding.path && unit.views.includes(finding.view))) invalid('finding provenance');
+    if (batch.checks && Object.keys(finding).sort().join() !== Object.keys(FINDING_PROPERTIES).sort().join()) invalid('finding fields');
   }
   if (batch.checks) validateQuality(result, batch);
   return result.findings;
@@ -793,10 +793,15 @@ async function main() {
       }, input, snapshots, explorationBudget);
       log('openai_batch_response', { unit_ids: batch.ids, attempt, latency_ms: Date.now() - started, status: exploration.response.status,
         exploration_tool_calls: exploration.calls, exploration_characters_sent: exploration.characters, usage: exploration.response.usage ?? null });
-      const result = parseBatchResponse(exploration.response);
-      validateBatchResult(result, batch);
-      await verifySnapshotReferences([...result.findings, ...result.checks], snapshots);
-      return result;
+      try {
+        const result = parseBatchResponse(exploration.response);
+        validateBatchResult(result, batch);
+        await verifySnapshotReferences([...result.findings, ...result.checks], snapshots);
+        return result;
+      } catch (error) {
+        if (String(error.message).startsWith('Review evidence incomplete:')) log('review_batch_rejected', { attempt, reason: error.message });
+        throw error;
+      }
     }, deadline);
     log('review_batches_complete', { batches: batches.length, units: units.length, findings: findings.length });
     const markdown = await consolidateFindings({ findings, pr, reviewMode, deadline, requestConsolidation: async (data) => {
