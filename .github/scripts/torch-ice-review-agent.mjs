@@ -199,8 +199,11 @@ export function renderFindings({ findings, pr, reviewMode }) {
   }
   const unique = [...byIssue.values()];
   unique.sort((a, b) => rank[a.severity] - rank[b.severity]);
-  const inline = (value) => escapeUntrustedSection(String(value).replace(/\\?`/g, '')).replace(/\s+/g, ' ').replace(/[\\*_[\]#!|]/g, '\\$&');
-  const code = (value) => `\`${escapeUntrustedSection(String(value).replace(/`/g, '').replace(/\s+/g, ' '))}\``;
+  const unescapeContext = (value) => String(value).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const inline = (value) => escapeUntrustedSection(unescapeContext(value).replace(/\\?`/g, '')).replace(/\s+/g, ' ').replace(/[\\*_[\]#!|]/g, '\\$&');
+  // GitHub escapes HTML inside code spans; keep quotes readable after the one
+  // XML-escape layer added when untrusted source is sent to the model.
+  const code = (value) => `\`${unescapeContext(value).replace(/`/g, '').replace(/\s+/g, ' ')}\``;
   const render = (selected) => selected.map((finding, index) => {
     const refs = finding.references.map((ref) => ref.kind === 'snapshot' ? `${ref.snapshot} ${code(ref.path)} line ${ref.line_start}: ${code(ref.quote)}`
       : `${ref.view === 'base_head' ? 'current base to head' : 'PR diff'} ${ref.kind === 'metadata' ? 'metadata' : `lines ${ref.line_start}${ref.line_end === ref.line_start ? '' : `-${ref.line_end}`} (${ref.side})`}: ${code(ref.quote)}`).join('; ');

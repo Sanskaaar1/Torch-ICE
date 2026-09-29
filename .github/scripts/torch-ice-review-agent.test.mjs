@@ -520,8 +520,17 @@ test('renderer keeps the highest severity and neutralizes model prose', () => {
   assert.equal((output.match(/### Finding /g) ?? []).length, 1);
   assert.match(output, /Finding 1 \(blocking\)/);
   assert.doesNotMatch(output, /^## forged section/m);
-  assert.doesNotMatch(output, /!\[image\]|<script>|@maintainer/);
+  assert.doesNotMatch(output, /!\[image\]|@maintainer/);
+  assert.match(output, /`<script>`/);
   assert.match(output, /Changes needed before merge; advisory review/);
+});
+
+test('renderer decodes one context-escape layer in validated source quotes', () => {
+  const finding = { ...batchFinding, evidence: 'Report is torch_readiness_report_&lt;backend&gt;.md',
+    references: [{ ...batchFinding.references[0], quote: 'torch_readiness_report_&lt;backend&gt;.md' }] };
+  const output = agent.renderFindings({ findings: [finding], pr: { number: 10 }, reviewMode: 'general' });
+  assert.match(output, /`torch_readiness_report_<backend>\.md`/);
+  assert.doesNotMatch(output, /&amp;lt;|&amp;gt;/);
 });
 
 test('batch validation requires exact ID accounting and matching finding provenance', () => {
