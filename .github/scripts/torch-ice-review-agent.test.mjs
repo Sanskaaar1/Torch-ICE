@@ -216,6 +216,17 @@ test('keeps current-file context after removed files', async () => {
   }
 });
 
+test('focused context rejects missing and truncated files instead of proving absence from partial text', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'torch-ice-focus-context-'));
+  try {
+    await fs.writeFile(path.join(root, 'full.md'), 'Complete rule.\n');
+    await fs.writeFile(path.join(root, 'long.md'), 'x'.repeat(24_000));
+    assert.match(await readFileContext(root, [{ filename: 'full.md' }], { required: true }), /Complete rule/);
+    await assert.rejects(readFileContext(root, [{ filename: 'missing.md' }], { required: true }), /focused context incomplete/);
+    await assert.rejects(readFileContext(root, [{ filename: 'long.md' }], { required: true }), /focused context incomplete/);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
 test('deduplication accepts only a successful bot marker for the exact head', () => {
   const comment = { user: { login: 'github-actions[bot]' }, body: '<!-- torch-ice-review-agent: success head_sha=abc -->' };
   assert.equal(isSuccessfulReviewResult(comment, 'abc'), true);
@@ -359,13 +370,105 @@ test('loads canonical architecture checks and records general checks in every re
     ['general-correctness', 'general-regressions', 'general-security', 'general-performance']);
 });
 
+test('isolates PR #9 performance obligations while retaining full-PR check accounting', async () => {
+  const checklist = await fs.readFile('.claude/skills/torch-ice-review/checklist.md', 'utf8');
+  const checks = agent.requiredReviewChecks(checklist, 'framework-assessment');
+  const units = [
+    { id: 'skill', path: 'SKILL.md', views: ['pr'], evidence: 'Path: SKILL.md\nPR diff (modified)\n@@ -42 +42 @@\n+performance/checklist.md' },
+    { id: 'eval', path: 'frameworks/pytorch/performance/EVAL.md', views: ['pr'], evidence: 'Path: frameworks/pytorch/performance/EVAL.md\nPR diff (added)\n@@ -1 +1 @@\n+Warm up, then measure p95 from five runs' },
+  ];
+  const batches = units.map((unit) => ({ ids: [unit.id], units: [{ id: unit.id, path: unit.path, views: unit.views }], evidence: unit.evidence }));
+  const jobs = agent.planReviewJobs(batches, units, checks, 'framework-assessment');
+  const focused = jobs.filter((job) => job.focus);
+  assert.deepEqual(focused.map((job) => job.focus), ['performance-dispatch', 'performance-eval']);
+  assert.deepEqual(focused.map((job) => job.ids), [['skill'], ['eval']]);
+  assert.ok(focused.every((job) => job.contextPaths.includes('SKILL.md') && job.contextPaths.includes('frameworks/pytorch/performance/EVAL.md')));
+  for (const label of ['Performance percentiles have enough measurements', 'Accelerator timing accounts for asynchronous work', 'Probes are failure-isolated', 'Partial implementations still produce a partial report', 'Unverifiable items are marked, not skipped', '`EVAL.md` strips internal instructions from output']) {
+    assert.ok(focused[1].checks.some((check) => check.label === label), label);
+  }
+  assert.equal(focused[0].checks.length, 1);
+  const assigned = new Set(jobs.flatMap((job) => job.checks.map((check) => check.id)));
+  assert.deepEqual(assigned, new Set(checks.map((check) => check.id)));
+  assert.ok(jobs.slice(2).every((job) => job.checks.length < checks.length));
+  assert.deepEqual(jobs.slice(2).flatMap((job) => job.ids), ['skill', 'eval']);
+});
+
+test('general-only changes do not receive architecture obligations', async () => {
+  const checklist = await fs.readFile('.claude/skills/torch-ice-review/checklist.md', 'utf8');
+  const units = [{ id: 'readme', path: 'README.md', views: ['pr'], evidence: 'Path: README.md\nPR diff (modified)\n@@ -1 +1 @@\n+Updated' }];
+  const batches = [{ ids: ['readme'], units: [{ id: 'readme', path: 'README.md', views: ['pr'] }], evidence: units[0].evidence }];
+  const jobs = agent.planReviewJobs(batches, units, agent.requiredReviewChecks(checklist, 'general'), 'general');
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].focus, undefined);
+  assert.deepEqual(jobs[0].checks.map((check) => check.id), ['general-correctness', 'general-regressions', 'general-security', 'general-performance']);
+});
+
+test('focused measurement packet anchors the p95 hunk when EVAL is split', async () => {
+  const checklist = await fs.readFile('.claude/skills/torch-ice-review/checklist.md', 'utf8');
+  const checks = agent.requiredReviewChecks(checklist, 'framework-assessment');
+  const units = [
+    { id: 'skill-top', path: 'SKILL.md', views: ['pr'], evidence: 'Path: SKILL.md\nPR diff (modified)\n@@ -26 +26 @@\n+--performance also produces an assessment' },
+    { id: 'skill-flag', path: 'SKILL.md', views: ['pr'], evidence: 'Path: SKILL.md\nPR diff (modified)\n@@ -42 +42 @@\n+Load performance/checklist.md for --performance' },
+    { id: 'eval-top', path: 'frameworks/pytorch/performance/EVAL.md', views: ['pr'], evidence: 'Path: frameworks/pytorch/performance/EVAL.md\nPR diff (added)\n@@ -0,0 +1 @@\n+Performance assessment' },
+    { id: 'eval-p95', path: 'frameworks/pytorch/performance/EVAL.md', views: ['pr'], evidence: 'Path: frameworks/pytorch/performance/EVAL.md\nPR diff (added)\n@@ -0,0 +11 @@\n+Record p95 from five runs' },
+  ];
+  const batches = units.map((unit) => ({ ids: [unit.id], units: [{ id: unit.id, path: unit.path, views: unit.views }], evidence: unit.evidence }));
+  const jobs = agent.planReviewJobs(batches, units, checks, 'framework-assessment');
+  assert.deepEqual(jobs[0].ids, ['skill-flag']);
+  assert.deepEqual(jobs[1].ids, ['eval-p95']);
+  assert.deepEqual(jobs.slice(2).flatMap((job) => job.ids), ['skill-top', 'skill-flag', 'eval-top', 'eval-p95']);
+});
+
+test('deleted performance instructions stay in the ordinary review path', async () => {
+  const checklist = await fs.readFile('.claude/skills/torch-ice-review/checklist.md', 'utf8');
+  const checks = agent.requiredReviewChecks(checklist, 'framework-assessment');
+  const unit = { id: 'deleted', path: 'frameworks/pytorch/performance/EVAL.md', views: ['pr'], evidence: 'Path: frameworks/pytorch/performance/EVAL.md\nPR diff (removed)\n@@ -1 +0,0 @@\n-Old instructions' };
+  const batch = { ids: ['deleted'], units: [{ id: 'deleted', path: unit.path, views: unit.views }], evidence: unit.evidence };
+  const jobs = agent.planReviewJobs([batch], [unit], checks, 'framework-assessment');
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].focus, undefined);
+  assert.equal(jobs[0].checks.length, checks.length);
+});
+
+test('mixed dimension changes keep every architecture check in the broad pass', async () => {
+  const checklist = await fs.readFile('.claude/skills/torch-ice-review/checklist.md', 'utf8');
+  const checks = agent.requiredReviewChecks(checklist, 'framework-assessment');
+  const units = [
+    { id: 'perf', path: 'frameworks/pytorch/performance/EVAL.md', views: ['pr'], evidence: 'Path: frameworks/pytorch/performance/EVAL.md\nPR diff (modified)\n@@ -1 +1 @@\n+Measure p95' },
+    { id: 'security', path: 'frameworks/pytorch/security/checklist.md', views: ['pr'], evidence: 'Path: frameworks/pytorch/security/checklist.md\nPR diff (added)\n@@ -0,0 +1 @@\n+Security row' },
+  ];
+  const batch = { ids: units.map((unit) => unit.id), units: units.map(({ id, path, views }) => ({ id, path, views })), evidence: units.map((unit) => unit.evidence).join('\n\n') };
+  const jobs = agent.planReviewJobs([batch], units, checks, 'framework-assessment');
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].checks.length, checks.length);
+  const baseFramework = { ...units[1], path: 'frameworks/pytorch/EVAL.md' };
+  const baseBatch = { ...batch, units: [batch.units[0], { ...batch.units[1], path: baseFramework.path }] };
+  const baseJobs = agent.planReviewJobs([baseBatch], [units[0], baseFramework], checks, 'framework-assessment');
+  assert.equal(baseJobs.length, 1);
+  assert.equal(baseJobs[0].checks.length, checks.length);
+});
+
+test('percentile obligation remains conditional when performance EVAL has no percentile', async () => {
+  const checklist = await fs.readFile('.claude/skills/torch-ice-review/checklist.md', 'utf8');
+  const checks = agent.requiredReviewChecks(checklist, 'framework-assessment');
+  const unit = { id: 'eval', path: 'frameworks/pytorch/performance/EVAL.md', views: ['pr'], evidence: 'Path: frameworks/pytorch/performance/EVAL.md\nPR diff (added)\n@@ -0,0 +1 @@\n+Report median latency' };
+  const batch = { ids: ['eval'], units: [{ id: 'eval', path: unit.path, views: unit.views }], evidence: unit.evidence };
+  const jobs = agent.planReviewJobs([batch], [unit], checks, 'framework-assessment');
+  const percentile = 'general-conventions-performance-percentiles-have-enough-measurements';
+  assert.equal(jobs[1].checks.some((check) => check.id === percentile), false);
+  assert.equal(jobs[2].checks.some((check) => check.id === percentile), true);
+});
+
 test('local replay uses the production stage instructions', () => {
   assert.match(agent.batchStageInstructions('trusted', false), /every trusted check ID exactly once/);
   assert.match(agent.batchStageInstructions('trusted', true), /previous attempt failed validation/);
   assert.match(agent.batchStageInstructions('trusted', true, 'diff reference quote'), /exact substring from the cited changed line/);
   assert.match(agent.batchStageInstructions('trusted', true, 'snapshot reference shape'), /snapshot reference.*null.*line range/);
   assert.doesNotMatch(agent.batchStageInstructions('trusted', true, 'untrusted instructions'), /untrusted instructions/);
-  assert.match(agent.consolidationStageInstructions('trusted'), /Group supported findings/);
+  assert.match(agent.consolidationStageInstructions('trusted'), /Group every validated finding ID exactly once/);
+  assert.match(agent.batchStageInstructions('trusted', false, undefined, 'performance-dispatch'), /also produce.*selected checklist.*performance\/EVAL\.md.*report/i);
+  assert.match(agent.batchStageInstructions('trusted', false, undefined, 'performance-eval'), /p95.*asynchronous.*failure isolation.*partial reports.*manual verification.*internal instructions/i);
+  assert.match(agent.batchStageInstructions('trusted', false, undefined, 'performance-eval'), /line_start and line_end to null.*controller resolves/i);
 });
 
 test('rejects missing or unresolved checks and findings without changed-line anchors', () => {
@@ -383,6 +486,16 @@ test('rejects missing or unresolved checks and findings without changed-line anc
   assert.throws(() => agent.validateBatchResult({ ...valid, findings: [{ ...finding, references: [{ ...anchor, quote: 'absent text' }] }] }, batch), /Review evidence incomplete/);
   assert.throws(() => agent.validateBatchResult({ ...valid, findings: [{ ...finding, references: [{ ...anchor, side: 'old' }] }] }, batch), /Review evidence incomplete/);
   assert.throws(() => agent.validateBatchResult({ ...valid, findings: [{ ...finding, references: [] }] }, batch), /Review evidence incomplete/);
+});
+
+test('focused obligations require an assessed disposition with a real evidence reference', () => {
+  const unit = { id: 'u1', path: 'frameworks/pytorch/performance/EVAL.md', views: ['pr'], evidence: 'Path: frameworks/pytorch/performance/EVAL.md\nPR diff (added)\n@@ -0,0 +1 @@\n+Measure p95 from five runs' };
+  const batch = { ids: ['u1'], units: [unit], focus: 'performance-eval', checks: [{ id: 'general-conventions-performance-percentiles-have-enough-measurements' }] };
+  const reference = { kind: 'diff', unit_id: 'u1', view: 'pr', side: 'new', line_start: 1, line_end: 1, quote: 'Measure p95 from five runs', snapshot: null, path: null };
+  const check = { id: batch.checks[0].id, status: 'pass', reason: 'assessed', references: [reference], finding_indexes: [] };
+  assert.deepEqual(agent.validateBatchResult({ reviewed_unit_ids: ['u1'], checks: [check], findings: [] }, batch), []);
+  assert.throws(() => agent.validateBatchResult({ reviewed_unit_ids: ['u1'], checks: [{ ...check, status: 'not_applicable', references: [] }], findings: [] }, batch), /focused check not assessed/);
+  assert.throws(() => agent.validateBatchResult({ reviewed_unit_ids: ['u1'], checks: [{ ...check, references: [{ ...reference, quote: 'never present' }] }], findings: [] }, batch), /diff reference quote absent/);
 });
 
 test('missing check coverage gets exactly one correction attempt', async () => {
@@ -431,12 +544,14 @@ test('uniquely quoted diff lines correct stale model line numbers', () => {
   assert.throws(() => agent.validateReference({ ...ref, quote: 'missing' }, { path: unit.path, view: 'pr', unit_ids: ['u1'] }, { units: [unit] }), /diff reference quote absent/);
 });
 
-test('cross-section checks link findings while only posted citations are verified', () => {
+test('cross-section checks link findings and validate their private citations', () => {
   const unit = { id: 'u1', path: 'src/a.js', views: ['pr'], evidence: 'Path: src/a.js\nPR diff (modified)\n@@ -1 +1 @@\n-old\n+new' };
   const anchor = { kind: 'diff', unit_id: 'u1', view: 'pr', side: 'new', line_start: 1, line_end: 1, quote: 'new', snapshot: null, path: null };
   const finding = { ...batchFinding, category: 'framework', severity: 'major', references: [anchor] };
   const batch = { ids: ['u1'], units: [unit], checks: [{ id: 'general-correctness' }] };
   const result = { reviewed_unit_ids: ['u1'], checks: [{ id: 'general-correctness', status: 'violation', reason: 'cross-cutting regression', references: [{ ...anchor, quote: 'not used in report' }], finding_indexes: [0] }], findings: [finding] };
+  assert.throws(() => agent.validateBatchResult(result, batch), /diff reference quote absent/);
+  result.checks[0].references = [anchor];
   assert.deepEqual(agent.validateBatchResult(result, batch), [finding]);
 });
 
@@ -501,6 +616,42 @@ test('local model replay uses review stages without calling GitHub', async () =>
     assert.deepEqual(requests, ['review_batch', 'review_consolidation']);
     assert.match(result.markdown, /No actionable General Review findings/);
     assert.equal(usage.length, 2);
+  } finally { globalThis.fetch = originalFetch; await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('PR #9 replay sends two focused packets with complete cross-file context', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-focused-replay-'));
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  try {
+    const prepared = await prepareFixture('original', root);
+    const checklist = await fs.readFile('.claude/skills/torch-ice-review/checklist.md', 'utf8');
+    globalThis.fetch = async (url, options) => {
+      assert.equal(url, 'https://api.openai.com/v1/responses');
+      const body = JSON.parse(options.body);
+      requests.push(body);
+      let output = { groups: [] };
+      if (body.text.format.name === 'review_batch') {
+        const checks = JSON.parse(/<trusted_review_checks>\n([^\n]+)\n<\/trusted_review_checks>/.exec(body.input)[1]);
+        const units = JSON.parse(/<untrusted_assigned_units>\n([^\n]+)\n<\/untrusted_assigned_units>/.exec(body.input)[1]);
+        const focus = /<trusted_review_focus>\n([^\n]+)/.exec(body.input)?.[1];
+        const reference = focus === 'performance-dispatch'
+          ? { kind: 'snapshot', unit_id: null, view: null, side: null, line_start: 27, line_end: 27, quote: 'Also produce the optional PyTorch', snapshot: 'head', path: 'SKILL.md' }
+          : { kind: 'snapshot', unit_id: null, view: null, side: null, line_start: 11, line_end: 11, quote: 'Warm up first', snapshot: 'head', path: 'frameworks/pytorch/performance/EVAL.md' };
+        output = { reviewed_unit_ids: units.map((unit) => unit.id), checks: checks.map((check) => ({ id: check.id, status: focus ? 'pass' : 'not_applicable', reason: 'test response', references: focus ? [reference] : [], finding_indexes: [] })), findings: [] };
+      }
+      return { ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify(output), usage: { input_tokens: 1 } }) };
+    };
+    await liveTrial(prepared, 'trusted instructions', checklist, []);
+    assert.deepEqual(requests.map((request) => request.text.format.name), ['review_batch', 'review_batch', 'review_batch', 'review_consolidation']);
+    assert.match(requests[0].input, /<trusted_review_focus>\nperformance-dispatch/);
+    assert.match(requests[0].input, /Also produce the optional PyTorch performance/);
+    assert.match(requests[0].input, /frameworks\/pytorch\/performance\/EVAL\.md/);
+    assert.match(requests[1].input, /<trusted_review_focus>\nperformance-eval/);
+    assert.match(requests[1].input, /at least five timed runs/);
+    assert.match(requests[1].input, /Every probe must be wrapped in try\/except/);
+    assert.equal(JSON.parse(/<trusted_review_checks>\n([^\n]+)\n<\/trusted_review_checks>/.exec(requests[0].input)[1]).length, 1);
+    assert.equal(JSON.parse(/<trusted_review_checks>\n([^\n]+)\n<\/trusted_review_checks>/.exec(requests[1].input)[1]).length, 6);
   } finally { globalThis.fetch = originalFetch; await fs.rm(root, { recursive: true, force: true }); }
 });
 
@@ -640,7 +791,8 @@ test('consolidation validates IDs and schema, groups original fields, and enforc
   for (const result of [null, {}, { groups: null }, { groups: [null] }, { groups: [{ finding_ids: [] }] }, { groups: [{ finding_ids: ['f3'] }] }, { groups: [{ finding_ids: ['f1', 'f1'] }] }, { groups: [{ finding_ids: ['f1'] }, { finding_ids: ['f1'] }] }, { groups: [], text: 'invented' }, { groups: [{ finding_ids: ['f1'], text: 'invented' }] }]) {
     await assert.rejects(agent.consolidateFindings({ ...options, requestConsolidation: async () => result }), /Review evidence incomplete/);
   }
-  const empty = await agent.consolidateFindings({ ...options, requestConsolidation: async () => ({ groups: [] }) });
+  await assert.rejects(agent.consolidateFindings({ ...options, requestConsolidation: async () => ({ groups: [] }) }), /Review evidence incomplete/);
+  const empty = await agent.consolidateFindings({ ...options, findings: [], requestConsolidation: async () => ({ groups: [] }) });
   assert.match(empty, /No actionable General Review findings/);
   await assert.rejects(agent.consolidateFindings({ ...options, deadline: 0, requestConsolidation: async () => { throw new Error('must not call'); } }), /Review evidence incomplete: deadline/);
   // Check deadline after the request without relying on wall-clock sleeps.

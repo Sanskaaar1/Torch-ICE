@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { packReviewBatches } from './torch-ice-review-evidence.mjs';
 import {
   BATCH_RESULT_SCHEMA, CONSOLIDATION_SCHEMA, EXPLORATION_TOOLS, batchStageInstructions, buildReviewInput, consolidationStageInstructions, consolidateFindings, parseBatchResponse,
-  prepareReviewUnits, readFileContext, redactSensitiveText, requiredReviewChecks, reviewBatches,
+  planReviewJobs, prepareReviewUnits, readFileContext, redactSensitiveText, requiredReviewChecks, reviewBatches,
   reviewRequestTimeoutMs, runExplorationLoop, selectReviewMode, validateBatchResult, verifySnapshotReferences,
 } from './torch-ice-review-agent.mjs';
 
@@ -79,11 +79,11 @@ async function requestModel({ instructions, schema, name, input, deadline, usage
 }
 
 export async function liveTrial(prepared, instructions, checklist, usage) {
-  const { fixture, snapshots, files, units, batches, reviewMode } = prepared;
+  const { fixture, snapshots, files, units, reviewMode } = prepared;
   const checks = requiredReviewChecks(checklist, reviewMode);
+  const batches = planReviewJobs(prepared.batches, units, checks, reviewMode);
   const evidenceById = new Map(units.map((unit) => [unit.id, unit.evidence]));
   for (const batch of batches) {
-    batch.checks = checks;
     batch.unitEvidence = Object.fromEntries(batch.ids.map((id) => [id, evidenceById.get(id)]));
   }
   const deadline = Date.now() + 14 * 60_000;
@@ -92,11 +92,12 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
   const findings = await reviewBatches(batches, async (batch, attempt, retryReason) => {
     const paths = new Set(batch.units.map((unit) => unit.path));
     const batchFiles = files.filter((file) => paths.has(file.filename));
-    const fileContext = await readFileContext(snapshots.head, reviewMode === 'framework-assessment'
+    const contextFiles = batch.contextPaths ? batch.contextPaths.map((filename) => ({ filename })) : reviewMode === 'framework-assessment'
       ? [{ filename: 'SKILL.md' }, ...batchFiles.filter((file) => file.filename !== 'SKILL.md')]
-      : batchFiles);
+      : batchFiles;
+    const fileContext = await readFileContext(snapshots.head, contextFiles, { required: !!batch.focus });
     const input = buildReviewInput({ pr: { number: 9, title: fixture.name }, headSha: fixture.head, files: batchFiles,
-      batchEvidence: batch.evidence, fileContext, history: [], checklist, checks, reviewMode }).input;
+      batchEvidence: batch.evidence, fileContext, history: [], checklist, checks: batch.checks, reviewMode, focus: batch.focus }).input;
     let offset = 0;
     const manifest = batch.units.map((unit) => {
       const start = offset;
@@ -106,12 +107,12 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
       return result;
     });
     const requestInput = redactSensitiveText(`${input}\n\n<untrusted_assigned_units>\n${JSON.stringify(manifest).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}\n</untrusted_assigned_units>`).text;
-    const stage = batchStageInstructions(instructions, attempt, retryReason);
+    const stage = batchStageInstructions(instructions, attempt, retryReason, batch.focus);
     const exploration = await runExplorationLoop((turns, { toolChoice = 'auto' } = {}) => requestModel({ instructions: stage, schema: BATCH_RESULT_SCHEMA, name: 'review_batch', input: turns, deadline, usage,
       tools: EXPLORATION_TOOLS, toolChoice, maxOutputTokens: 8192 }), requestInput, snapshots, explorationBudget);
     const result = parseBatchResponse(exploration.response);
     validateBatchResult(result, batch);
-    await verifySnapshotReferences(result.findings, snapshots);
+    await verifySnapshotReferences([...result.findings, ...result.checks], snapshots);
     return result;
   }, deadline);
   const markdown = await consolidateFindings({ findings, pr: { number: 9, title: fixture.name }, reviewMode, deadline,

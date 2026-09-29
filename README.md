@@ -243,8 +243,13 @@ packed into at most eight batches of up to 20,000 characters each, totaling
 at most 160,000 characters. An indivisible evidence unit exceeding the
 20,000-character limit fails the review. Each request uses fixed section
 budgets under a 256,000-character ceiling (about 64k tokens).
+When the PyTorch performance dimension is the only changed framework surface,
+two focused requests trace
+flag dispatch and assess measurement and execution rules against complete
+`SKILL.md` and performance `EVAL.md` context. Other checks stay in the normal
+batches; all requests share the same deadline and retry limits.
 Every unit and applicable checklist check must be accounted for before a final
-tools-disabled request groups validated findings. Changed-line citations and
+tools-disabled request groups every validated finding. Changed-line citations and
 supporting snapshot quotes are checked against pinned evidence. The application
 sorts findings by severity and renders an advisory Markdown review from those
 original findings. Missing evidence, exceeded limits, invalid results, or

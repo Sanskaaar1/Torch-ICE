@@ -78,8 +78,10 @@ All prose fields are plain text without Markdown delimiters.
 Each reference has `kind`, `unit_id`, `view`, `side`, `line_start`, `line_end`,
 `quote`, `snapshot`, and `path`. For a `diff` reference, use an assigned unit,
 its `pr` or `base_head` view, `old` or `new` side, a one-to-twenty-line
-numeric range containing a changed line, and a short exact quote from that
-changed line; set `snapshot` and reference `path` to null. For `metadata`,
+numeric range containing a changed line (or null line fields when the exact
+quote is unique), and a short exact quote from that changed line; the
+controller resolves unique quotes to source lines. Set `snapshot` and
+reference `path` to null. For `metadata`,
 cite assigned nontext metadata by exact quote with side and line fields null.
 For `snapshot`, set `unit_id`, `view`, and `side` to null, and name the base
 or head snapshot, path, one line number, and exact quote; use it only for
@@ -89,9 +91,9 @@ the complete inspected scope; truncated context cannot establish absence.
 Keep findings empty when there are no actionable defects.
 
 When the trusted stage instruction selects `consolidation`, return only the
-supplied JSON schema: `groups: [{ finding_ids: string[] }]`. Use only IDs from
-validated candidate findings, each at most once. Group findings with the same
-root cause or fix; omit unsupported findings. Stale-branch regressions that
+supplied JSON schema: `groups: [{ finding_ids: string[] }]`. Use every ID from
+validated candidate findings exactly once. Group findings with the same
+root cause or fix; do not omit findings. Stale-branch regressions that
 share one rebase fix should form one General Review group with concrete
 examples. Do not add finding text or use tools. The application renders the
 retained original paths, verified references, evidence, impact, and fix into the final
