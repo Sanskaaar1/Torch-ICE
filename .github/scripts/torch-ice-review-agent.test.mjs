@@ -382,6 +382,15 @@ test('uniquely quoted diff lines correct stale model line numbers', () => {
   assert.throws(() => agent.validateReference({ ...ref, quote: 'missing' }, { path: unit.path, view: 'pr', unit_ids: ['u1'] }, { units: [unit] }), /diff reference quote absent/);
 });
 
+test('a multi-line diff quote narrows to one verified changed line', () => {
+  const unit = { id: 'u1', path: 'src/a.js', views: ['pr'], evidence: 'Path: src/a.js\nPR diff (modified)\n@@ -1 +1,2 @@\n-old\n+new\n+second' };
+  const batch = { ids: ['u1'], units: [unit] };
+  const ref = { kind: 'diff', unit_id: 'u1', view: 'pr', side: 'new', line_start: null, line_end: null, quote: 'new\nsecond', snapshot: null, path: null };
+  assert.equal(agent.validateReference(ref, { path: unit.path, view: 'pr', unit_ids: ['u1'] }, batch), true);
+  assert.deepEqual([ref.quote, ref.line_start, ref.line_end], ['new', 1, 1]);
+  assert.throws(() => agent.validateReference({ ...ref, quote: 'invented\nabsent' }, { path: unit.path, view: 'pr', unit_ids: ['u1'] }, batch), /diff reference quote absent/);
+});
+
 test('snapshot references must match complete trusted file lines', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-citation-'));
   const head = path.join(root, 'head');

@@ -58,7 +58,7 @@ function changedLines(evidence, view, side) {
 }
 
 export function validateReference(ref, finding, batch) {
-  if (!ref || !['diff', 'metadata', 'snapshot'].includes(ref.kind) || typeof ref.quote !== 'string' || !ref.quote.trim() || (ref.kind !== 'snapshot' && /[\r\n]/.test(ref.quote))) incomplete('reference shape');
+  if (!ref || !['diff', 'metadata', 'snapshot'].includes(ref.kind) || typeof ref.quote !== 'string' || !ref.quote.trim()) incomplete('reference shape');
   if (ref.kind === 'snapshot') {
     const noRange = ref.line_start === null && ref.line_end === null;
     const sourceRange = Number.isSafeInteger(ref.line_start) && Number.isSafeInteger(ref.line_end) && ref.line_start >= 1 && ref.line_end >= ref.line_start && ref.line_end - ref.line_start < 200;
@@ -71,6 +71,7 @@ export function validateReference(ref, finding, batch) {
   const evidence = unit.evidence ?? batch.unitEvidence?.[unit.id];
   if (typeof evidence !== 'string') incomplete('reference evidence');
   if (ref.kind === 'metadata') {
+    if (/[\r\n]/.test(ref.quote)) incomplete('reference shape');
     const segment = evidence.split(/(?=^Path: )/m).find((part) => part.includes(ref.view === 'pr' ? 'PR diff (' : 'current base to head ('));
     const metadataLine = segment?.split(/\r?\n/).some((line) => /^(?:old mode|new mode|rename from|rename to|similarity index|Binary files|GIT binary patch|new file mode|deleted file mode|index)\b/.test(line) && quoted(line, ref.quote));
     if (ref.side !== null || ref.line_start !== null || ref.line_end !== null || !segment || /^@@ /m.test(segment) || !metadataLine) incomplete('metadata reference');
@@ -78,6 +79,12 @@ export function validateReference(ref, finding, batch) {
   }
   if (!['old', 'new'].includes(ref.side)) incomplete('diff reference side');
   const lines = changedLines(evidence, ref.view, ref.side);
+  if (/[\r\n]/.test(ref.quote)) {
+    const quote = ref.quote.split(/\r?\n/).map((part) => part.trim()).find((part) => part && lines.filter((line) => line.changed && quoted(line.text, part)).length === 1);
+    if (!quote) incomplete('diff reference quote absent from assigned evidence');
+    ref.quote = quote;
+    ref.line_start = ref.line_end = null;
+  }
   const matches = lines.filter((line) => quoted(line.text, ref.quote));
   if (!matches.length) incomplete('diff reference quote absent from assigned evidence');
   const validRange = Number.isSafeInteger(ref.line_start) && Number.isSafeInteger(ref.line_end) && ref.line_start >= 1 && ref.line_end >= ref.line_start && ref.line_end - ref.line_start <= 19;
