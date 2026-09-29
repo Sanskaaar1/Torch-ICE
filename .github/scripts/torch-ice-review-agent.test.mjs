@@ -363,6 +363,7 @@ test('local replay uses the production stage instructions', () => {
   assert.match(agent.batchStageInstructions('trusted', false), /every trusted check ID exactly once/);
   assert.match(agent.batchStageInstructions('trusted', true), /previous attempt failed validation/);
   assert.match(agent.batchStageInstructions('trusted', true, 'diff reference quote'), /exact substring from the cited changed line/);
+  assert.match(agent.batchStageInstructions('trusted', true, 'snapshot reference shape'), /snapshot reference.*null.*line range/);
   assert.doesNotMatch(agent.batchStageInstructions('trusted', true, 'untrusted instructions'), /untrusted instructions/);
   assert.match(agent.consolidationStageInstructions('trusted'), /Group supported findings/);
 });
@@ -403,6 +404,12 @@ test('retry receives a safe citation correction after quote validation fails', a
     return { reviewed_unit_ids: ['u1'], checks: [], findings: [] };
   }, Date.now() + 60_000);
   assert.deepEqual(attempts, [[0, undefined], [1, 'diff reference quote']]);
+});
+
+test('snapshot citations accept a verified short range with null diff fields', () => {
+  const ref = { kind: 'snapshot', unit_id: null, view: null, side: null, line_start: 2, line_end: 3, quote: 'shared rule', snapshot: 'head', path: 'SKILL.md' };
+  assert.doesNotThrow(() => agent.validateReference(ref, {}, { units: [] }));
+  assert.throws(() => agent.validateReference({ ...ref, unit_id: 'u1' }, {}, { units: [] }), /snapshot reference provenance/);
 });
 
 test('snapshot references must match complete trusted file lines', async () => {
