@@ -353,6 +353,18 @@ test('retry receives a safe citation correction after quote validation fails', a
   assert.deepEqual(attempts, [[0, undefined], [1, 'diff reference quote']]);
 });
 
+test('citation retry cannot silently discard a prior finding', async () => {
+  const error = new Error('Review evidence incomplete: reference shape.');
+  error.reviewDraft = { reviewed_unit_ids: ['u1'], findings: [batchFinding] };
+  const attempts = [];
+  await assert.rejects(agent.reviewBatches([batchU1], async (_, attempt, reason, draft) => {
+    attempts.push({ attempt, reason, draft });
+    if (!attempt) throw error;
+    return completeBatch;
+  }, Date.now() + 60_000), /retry dropped prior findings/);
+  assert.equal(attempts[1].draft.findings.length, 1);
+});
+
 test('snapshot citations accept a verified short range with null diff fields', () => {
   const ref = { kind: 'snapshot', unit_id: null, view: null, side: null, line_start: 2, line_end: 3, quote: 'shared rule', snapshot: 'head', path: 'SKILL.md' };
   assert.doesNotThrow(() => agent.validateReference(ref, {}, { units: [] }));
@@ -437,6 +449,31 @@ test('local model replay uses one review response without calling GitHub', async
     assert.match(result.markdown, /^## General Review\n\n/);
     assert.match(result.markdown, /No actionable General Review findings/);
     assert.equal(usage.length, 1);
+  } finally { globalThis.fetch = originalFetch; await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('live replay carries a rejected finding into its citation retry', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-retry-draft-'));
+  const originalFetch = globalThis.fetch;
+  try {
+    const prepared = await prepareFixture('general', root);
+    const unit = prepared.units[0];
+    const quote = unit.evidence.split('\n').find((line) => line.startsWith('+') && !line.startsWith('+++')).slice(1);
+    const finding = { ...batchFinding, unit_ids: [unit.id], path: unit.path, impact: 'The new guidance breaks the documented flow',
+      references: [{ kind: 'diff', unit_id: unit.id, view: 'pr', side: 'new', line_start: null, line_end: null, quote: '', snapshot: null, path: null }] };
+    const requests = [];
+    globalThis.fetch = async (_url, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(body);
+      const response = { reviewed_unit_ids: prepared.batches[0].ids, findings: [{ ...finding, references: [{ ...finding.references[0], quote: requests.length === 1 ? '' : quote }] }] };
+      return { ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify(response), usage: { input_tokens: 1 } }) };
+    };
+    const checklist = await fs.readFile('.claude/skills/torch-ice-review/checklist.md', 'utf8');
+    const result = await liveTrial(prepared, 'trusted instructions', checklist, []);
+    assert.equal(requests.length, 2);
+    assert.match(requests[1].input, /untrusted_prior_review/);
+    assert.match(requests[1].input, /new guidance breaks the documented flow/);
+    assert.match(result.markdown, /new guidance breaks the documented flow/);
   } finally { globalThis.fetch = originalFetch; await fs.rm(root, { recursive: true, force: true }); }
 });
 

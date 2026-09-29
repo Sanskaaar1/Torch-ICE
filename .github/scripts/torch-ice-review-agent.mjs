@@ -160,7 +160,7 @@ export function parseBatchResponse(response) {
 }
 
 export function batchStageInstructions(instructions, attempt, retryReason) {
-  const correction = attempt ? ` The previous attempt failed validation; return a complete corrected result.${retryReason === 'diff reference quote' ? ' Copy a short exact substring from the changed line.' : ''}${retryReason === 'snapshot reference shape' ? ' Check snapshot path, line, and exact quote.' : ''}` : '';
+  const correction = attempt ? ` The previous attempt failed validation; return a complete corrected result. Preserve prior substantive findings while correcting their citations.${retryReason === 'diff reference quote' ? ' Copy a short exact substring from the changed line.' : ''}${retryReason === 'snapshot reference shape' ? ' Check snapshot path, line, and exact quote.' : ''}` : '';
   return `${instructions}\n\nTrusted stage: review. Return only review_batch JSON. Review every assigned unit ID exactly once. Report only actionable findings with a changed-source diff or metadata anchor. Trace related flag, checklist, EVAL, and report paths through snapshot tools where needed. For a unique diff quote, set line_start and line_end to null so the controller resolves its source line. Snapshot quotes may use the XML escaping shown in supplied context. Use plain text in finding fields; the renderer formats validated references.${correction}`;
 }
 
@@ -168,16 +168,20 @@ export async function reviewBatches(batches, requestBatch, deadline) {
   const findings = [];
   for (const batch of batches) {
     let retryReason;
+    let retryDraft;
     for (let attempt = 0; attempt < 2; attempt++) {
       if (Date.now() >= deadline) throw new Error('Review evidence incomplete: deadline.');
       try {
-        const result = await requestBatch(batch, attempt, retryReason);
+        const result = await requestBatch(batch, attempt, retryReason, retryDraft);
         if (Date.now() >= deadline) throw new Error('Review evidence incomplete: deadline.');
-        findings.push(...validateBatchResult(result, batch));
+        validateBatchResult(result, batch);
+        if (retryDraft?.findings?.length && result.findings.length < retryDraft.findings.length) incomplete('retry dropped prior findings');
+        findings.push(...result.findings);
         break;
       } catch (error) {
         if (attempt === 1) throw error;
         const message = String(error.message);
+        retryDraft = error.reviewDraft;
         retryReason = message.includes('Review evidence incomplete: diff reference quote') ? 'diff reference quote'
           : message.includes('Review evidence incomplete: invalid snapshot reference') || message.includes('Review evidence incomplete: snapshot reference') ? 'snapshot reference shape' : undefined;
       }
@@ -748,7 +752,7 @@ async function main() {
     }
     // All attempts and batches share the original aggregate exploration limits.
     const explorationBudget = { calls: 0, characters: 0 };
-    const findings = await reviewBatches(batches, async (batch, attempt, retryReason) => {
+    const findings = await reviewBatches(batches, async (batch, attempt, retryReason, retryDraft) => {
       const paths = new Set(batch.units.map((unit) => unit.path));
       const batchFiles = normalizedFiles.filter((file) => paths.has(file.filename));
       const assessmentFiles = batchFiles.filter((file) => /\/(?:EVAL|checklist)\.md$/.test(file.filename));
@@ -766,7 +770,8 @@ async function main() {
         evidenceOffset += 2; // The packer joins complete units with two newlines.
         return assigned;
       })));
-      const input = redactSensitiveText(`${reviewInput.input}\n\n<untrusted_assigned_units>\n${manifest}\n</untrusted_assigned_units>`).text;
+      const priorReview = retryDraft ? `\n\n<untrusted_prior_review>\n${escapeUntrustedSection(JSON.stringify(retryDraft))}\n</untrusted_prior_review>` : '';
+      const input = redactSensitiveText(`${reviewInput.input}\n\n<untrusted_assigned_units>\n${manifest}\n</untrusted_assigned_units>${priorReview}`).text;
       if (input.length > INPUT_MAX_CHARS) throw new Error('Review input exceeded its fixed section budgets.');
       const batchInstructions = batchStageInstructions(instructions, attempt, retryReason);
       const exploration = await runExplorationLoop(async (requestInput, { toolChoice = 'auto' } = {}) => {
@@ -786,13 +791,21 @@ async function main() {
       }, input, snapshots, explorationBudget);
       log('openai_batch_response', { unit_ids: batch.ids, attempt, latency_ms: Date.now() - started, status: exploration.response.status,
         exploration_tool_calls: exploration.calls, exploration_characters_sent: exploration.characters, usage: exploration.response.usage ?? null });
+      let result;
       try {
-        const result = parseBatchResponse(exploration.response);
+        result = parseBatchResponse(exploration.response);
         validateBatchResult(result, batch);
         await verifySnapshotReferences(result.findings, snapshots);
         return result;
       } catch (error) {
-        if (String(error.message).startsWith('Review evidence incomplete:')) log('review_batch_rejected', { attempt, reason: error.message });
+        if (attempt === 0 && result && String(error.message).startsWith('Review evidence incomplete:')) error.reviewDraft = result;
+        if (String(error.message).startsWith('Review evidence incomplete:')) log('review_batch_rejected', { attempt, reason: error.message,
+          finding_count: Array.isArray(result?.findings) ? result.findings.length : null,
+          reference_shapes: Array.isArray(result?.findings) ? result.findings.slice(0, 8).flatMap((finding) =>
+            Array.isArray(finding?.references) ? finding.references.slice(0, 8).map((ref) => ({
+              kind: ref?.kind, quote_length: ref?.quote?.length ?? null, quote_lines: typeof ref?.quote === 'string' ? ref.quote.split(/\r?\n/).length : null,
+            })) : []) : [],
+        });
         throw error;
       }
     }, deadline);
