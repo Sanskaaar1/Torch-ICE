@@ -139,6 +139,14 @@ test('rejects a review packet beyond the total evidence limit', () => {
   assert.throws(() => packReviewBatches(units), /Review evidence incomplete: evidence limit/);
 });
 
+test('keeps a near-limit change set in one review packet', () => {
+  const units = Array.from({ length: 8 }, (_, index) => ({ id: `u${index + 1}`, path: `${index}.js`, views: ['pr'], evidence: 'x'.repeat(19_000) }));
+  const batches = packReviewBatches(units);
+  assert.equal(batches.length, 1);
+  assert.deepEqual(batches[0].ids, units.map((unit) => unit.id));
+  assert.ok(batches[0].evidence.length > 150_000);
+});
+
 test('bounds complete diff lines by their escaped size before packing', () => {
   assert.throws(() => buildReviewUnits({
     githubFiles: [{ filename: 'angle.js', status: 'modified', patch: `@@ -0,0 +1 @@\n+${'<'.repeat(5_000)}` }], rawDiff: '', directEvidence: [],
