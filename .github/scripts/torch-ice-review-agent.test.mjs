@@ -588,6 +588,13 @@ test('renderer decodes one context-escape layer in validated source quotes', () 
   assert.doesNotMatch(output, /&amp;lt;|&amp;gt;/);
 });
 
+test('renderer preserves the additive performance flag semantics', () => {
+  const finding = { ...batchFinding, impact: 'No performance-only optional assessment example is shown.' };
+  const output = agent.renderFindings({ findings: [finding], pr: { number: 9 }, reviewMode: 'general' });
+  assert.match(output, /No optional performance assessment example is shown/);
+  assert.doesNotMatch(output, /performance-only/);
+});
+
 test('renderer shows the full range for a verified multiline snapshot quote', () => {
   const finding = { ...batchFinding, references: [batchFinding.references[0], {
     kind: 'snapshot', unit_id: null, view: null, side: null, line_start: 103, line_end: 106,

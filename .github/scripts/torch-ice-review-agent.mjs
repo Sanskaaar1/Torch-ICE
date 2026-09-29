@@ -233,7 +233,7 @@ export function renderFindings({ findings, pr, reviewMode }) {
   const unique = [...byIssue.values()];
   unique.sort((a, b) => rank[a.severity] - rank[b.severity]);
   const unescapeContext = (value) => String(value).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-  const inline = (value) => escapeUntrustedSection(unescapeContext(value).replace(/\\?`/g, '')).replace(/\s+/g, ' ').replace(/[\\*_[\]#!|]/g, '\\$&');
+  const inline = (value) => escapeUntrustedSection(unescapeContext(value).replace(/\bperformance-only optional assessment\b/gi, 'optional performance assessment').replace(/\bperformance-only\b/gi, '--performance').replace(/\\?`/g, '')).replace(/\s+/g, ' ').replace(/[\\*_[\]#!|]/g, '\\$&');
   // GitHub escapes HTML inside code spans; keep quotes readable after the one
   // XML-escape layer added when untrusted source is sent to the model.
   const code = (value) => `\`${unescapeContext(value).replace(/`/g, '').replace(/\s+/g, ' ')}\``;
