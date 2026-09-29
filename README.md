@@ -241,8 +241,8 @@ and SVGs; binary-change metadata is retained. Complete evidence units of at
 most 20,000 characters are sent together in one review packet, with a
 160,000-character total evidence limit. An indivisible unit exceeding its limit
 fails the review. The request has a 256,000-character ceiling (about 64k
-tokens) and one correction attempt. The response accounts for every evidence
-unit. Changed-line citations
+tokens) and one second attempt for a rejected or empty review. The response
+accounts for every evidence unit. Changed-line citations
 and supporting snapshot quotes are checked against pinned evidence. The
 application removes exact duplicates, sorts findings by severity, and renders
 the advisory Markdown. Missing evidence, exceeded limits, or invalid results

@@ -447,7 +447,7 @@ test('pinned replay fixtures produce original, corrected, and general-only evide
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
-test('local model replay uses one review response without calling GitHub', async () => {
+test('local model replay checks a clean result twice without calling GitHub', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-replay-'));
   const originalFetch = globalThis.fetch;
   const requests = [];
@@ -463,10 +463,10 @@ test('local model replay uses one review response without calling GitHub', async
     };
     const usage = [];
     const result = await liveTrial(prepared, 'trusted instructions', checklist, usage);
-    assert.deepEqual(requests, ['review_batch']);
+    assert.deepEqual(requests, ['review_batch', 'review_batch']);
     assert.match(result.markdown, /^## General Review\n\n/);
     assert.match(result.markdown, /No actionable General Review findings/);
-    assert.equal(usage.length, 1);
+    assert.equal(usage.length, 2);
   } finally { globalThis.fetch = originalFetch; await fs.rm(root, { recursive: true, force: true }); }
 });
 
@@ -495,7 +495,7 @@ test('live replay carries a rejected finding into its citation retry', async () 
   } finally { globalThis.fetch = originalFetch; await fs.rm(root, { recursive: true, force: true }); }
 });
 
-test('PR #9 replay reviews the complete diff and shared rules in one request', async () => {
+test('PR #9 replay reviews the complete diff and shared rules in one packet', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-one-pass-'));
   const originalFetch = globalThis.fetch;
   const requests = [];
@@ -510,7 +510,7 @@ test('PR #9 replay reviews the complete diff and shared rules in one request', a
       return { ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify({ reviewed_unit_ids: prepared.batches[0].ids, findings: [] }), usage: { input_tokens: 1 } }) };
     };
     const result = await liveTrial(prepared, 'trusted instructions', checklist, []);
-    assert.equal(requests.length, 1);
+    assert.equal(requests.length, 2);
     assert.match(requests[0].input, /Also produce the optional PyTorch performance/);
     assert.match(requests[0].input, /at least five timed runs/);
     assert.match(requests[0].input, /Every probe must be wrapped in try\/except/);
@@ -585,6 +585,20 @@ test('batch review retries once, runs sequentially, and enforces the shared dead
   await assert.rejects(agent.reviewBatches([batchU1], async () => { failures++; throw new Error('Review evidence incomplete: invalid JSON.'); }, Date.now() + 60_000), /Review evidence incomplete/);
   assert.equal(failures, 2);
   await assert.rejects(agent.reviewBatches([batchU1], async () => { throw new Error('must not call'); }, 0), /Review evidence incomplete: deadline/);
+});
+
+test('a clean first pass gets the existing second attempt to catch missed findings', async () => {
+  const reasons = [];
+  const findings = await agent.reviewBatches([batchU1], async (_batch, attempt, reason) => {
+    reasons.push(reason);
+    return attempt === 0 ? completeBatch : { ...completeBatch, findings: [batchFinding] };
+  }, Date.now() + 60_000);
+  assert.deepEqual(reasons, [undefined, 'empty result']);
+  assert.deepEqual(findings, [batchFinding]);
+  assert.match(agent.batchStageInstructions('trusted', 1, 'empty result'), /independent second look/);
+  let findingPasses = 0;
+  await agent.reviewBatches([batchU1], async () => { findingPasses++; return { ...completeBatch, findings: [batchFinding] }; }, Date.now() + 60_000);
+  assert.equal(findingPasses, 1);
 });
 
 test('batch response parsing rejects refusal, incomplete output, and malformed JSON', () => {

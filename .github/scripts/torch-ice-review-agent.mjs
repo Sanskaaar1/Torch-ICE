@@ -159,7 +159,9 @@ export function parseBatchResponse(response) {
 }
 
 export function batchStageInstructions(instructions, attempt, retryReason) {
-  const correction = attempt ? ` The previous attempt failed validation; return a complete corrected result. Preserve prior substantive findings while correcting their citations.${retryReason === 'diff reference quote' ? ' Copy a short exact substring from the changed line.' : ''}${retryReason === 'snapshot reference shape' ? ' Check snapshot path, line, and exact quote.' : ''}` : '';
+  const correction = !attempt ? '' : retryReason === 'empty result'
+    ? ' The first pass found no issues. Take an independent second look for missed behavior conflicts, especially input branches and output contracts. Return any evidenced finding, or an empty result if none exists.'
+    : ` The previous attempt failed validation; return a complete corrected result. Preserve prior substantive findings while correcting their citations.${retryReason === 'diff reference quote' ? ' Copy a short exact substring from the changed line.' : ''}${retryReason === 'snapshot reference shape' ? ' Check snapshot path, line, and exact quote.' : ''}`;
   return `${instructions}\n\nTrusted stage: review. Return only review_batch JSON. Review every Unit ID marked in the evidence exactly once. Report only actionable findings with a changed-source diff or metadata anchor. Trace related flag, checklist, EVAL, and report paths through snapshot tools where needed. For a unique diff quote, set line_start and line_end to null so the controller resolves its source line. Snapshot quotes may use the XML escaping shown in supplied context. Use plain text in finding fields; the renderer formats validated references.${correction}`;
 }
 
@@ -175,6 +177,7 @@ export async function reviewBatches(batches, requestBatch, deadline) {
         if (Date.now() >= deadline) throw new Error('Review evidence incomplete: deadline.');
         validateBatchResult(result, batch);
         if (retryDraft?.findings?.length && result.findings.length < retryDraft.findings.length) incomplete('retry dropped prior findings');
+        if (attempt === 0 && !result.findings.length) { retryReason = 'empty result'; continue; }
         findings.push(...result.findings);
         break;
       } catch (error) {
