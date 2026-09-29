@@ -60,12 +60,14 @@ function changedLines(evidence, view, side) {
 export function validateReference(ref, finding, batch) {
   if (!ref || !['diff', 'metadata', 'snapshot'].includes(ref.kind) || typeof ref.quote !== 'string' || !ref.quote.trim() || (ref.kind !== 'snapshot' && /[\r\n]/.test(ref.quote))) incomplete('reference shape');
   if (ref.kind === 'snapshot') {
-    if (!['base', 'head'].includes(ref.snapshot) || typeof ref.path !== 'string' || !Number.isSafeInteger(ref.line_start) || !Number.isSafeInteger(ref.line_end) || ref.line_start < 1 || ref.line_end < ref.line_start || ref.line_end - ref.line_start > 19) incomplete('snapshot reference range');
+    const noRange = ref.line_start === null && ref.line_end === null;
+    const sourceRange = Number.isSafeInteger(ref.line_start) && Number.isSafeInteger(ref.line_end) && ref.line_start >= 1 && ref.line_end >= ref.line_start && ref.line_end - ref.line_start < 200;
+    if (!['base', 'head'].includes(ref.snapshot) || typeof ref.path !== 'string' || (!noRange && !sourceRange)) incomplete('snapshot reference range');
     if (ref.unit_id !== null || ref.view !== null || ref.side !== null) incomplete('snapshot reference provenance');
     return false;
   }
-  const unit = batch.units.find((entry) => entry.id === ref.unit_id && entry.path === finding.path && entry.views.includes(ref.view));
-  if (!unit || ref.view !== finding.view || ref.snapshot !== null || ref.path !== null || (finding.unit_ids && !finding.unit_ids.includes(ref.unit_id))) incomplete('reference provenance');
+  const unit = batch.units.find((entry) => entry.id === ref.unit_id && entry.views.includes(ref.view));
+  if (!unit || ref.snapshot !== null || ref.path !== null) incomplete('reference provenance');
   const evidence = unit.evidence ?? batch.unitEvidence?.[unit.id];
   if (typeof evidence !== 'string') incomplete('reference evidence');
   if (ref.kind === 'metadata') {
@@ -145,7 +147,10 @@ export function validateBatchResult(result, batch) {
     if (!batch.units.some((unit) => finding.unit_ids.includes(unit.id) && unit.path === finding.path && unit.views.includes(finding.view))) invalid('finding provenance');
     if (Object.keys(finding).sort().join() !== Object.keys(FINDING_PROPERTIES).sort().join()) invalid('finding fields');
     if (!['blocking', 'major', 'minor'].includes(finding.severity) || !Array.isArray(finding.references) || !finding.references.length) invalid('finding references');
-    if (!finding.references.map((ref) => validateReference(ref, finding, batch)).some(Boolean)) invalid('finding changed anchor');
+    const changedReferences = finding.references.map((ref) => validateReference(ref, finding, batch));
+    const changedAnchor = changedReferences.some((changed, index) => changed && finding.references[index].view === finding.view &&
+      batch.units.some((unit) => unit.id === finding.references[index].unit_id && unit.path === finding.path));
+    if (!changedAnchor) invalid('finding changed anchor');
   }
   return result.findings;
 }
@@ -551,8 +556,9 @@ export async function verifySnapshotReferences(findings, snapshots) {
       const { root, resolved } = await snapshotPath(snapshots, ref.snapshot, ref.path);
       const { content, truncated } = await readSnapshotFile(resolved, 1_000_000);
       const lines = content.split(/\r?\n/);
+      const conciseRange = () => Number.isSafeInteger(ref.line_start) && Number.isSafeInteger(ref.line_end) && ref.line_end - ref.line_start <= 19;
       if (path.relative(root, resolved) !== ref.path) throw new Error('Snapshot path changed.');
-      if (ref.line_end <= lines.length &&
+      if (conciseRange() && ref.line_end <= lines.length &&
           quoted(lines.slice(ref.line_start - 1, ref.line_end).join('\n'), ref.quote)) continue;
       if (truncated) throw new Error('Snapshot was truncated.');
       const fullText = lines.join('\n');
@@ -566,7 +572,7 @@ export async function verifySnapshotReferences(findings, snapshots) {
         ref.line_end = end;
         break;
       }
-      if (ref.line_end <= lines.length && quoted(lines.slice(ref.line_start - 1, ref.line_end).join('\n'), ref.quote)) continue;
+      if (conciseRange() && ref.line_end <= lines.length && quoted(lines.slice(ref.line_start - 1, ref.line_end).join('\n'), ref.quote)) continue;
     } catch { /* An invalid path or unreadable file is an invalid reference. */ }
     throw new Error('Review evidence incomplete: invalid snapshot reference.');
   }

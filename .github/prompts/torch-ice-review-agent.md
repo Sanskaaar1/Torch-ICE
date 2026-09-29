@@ -77,8 +77,12 @@ will determine its source line. Set snapshot and reference path to null.
 For metadata, cite assigned nontext metadata by exact quote and set side and
 line fields to null. For snapshot, set unit_id, view, and side to null; name
 the base or head snapshot, path, short line range, and a quote from that
-range. Snapshot references support a finding but cannot replace its changed
-source anchor. When a finding depends on an unchanged rule, include a snapshot
+range. When the snapshot quote is unique, set line_start and line_end to null
+and the controller will resolve its location. Diff references may also cite
+changed supporting files, but one must
+anchor the finding's primary path and view. Snapshot references support a
+finding but cannot replace its changed source anchor. When a finding depends
+on an unchanged rule, include a snapshot
 reference for that rule. For an absence claim, cite the changed instruction and identify
 the complete inspected scope; truncated context cannot establish absence.
 Keep findings empty when there are no actionable defects. The application

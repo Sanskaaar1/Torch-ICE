@@ -368,6 +368,9 @@ test('citation retry cannot silently discard a prior finding', async () => {
 test('snapshot citations accept a verified short range with null diff fields', () => {
   const ref = { kind: 'snapshot', unit_id: null, view: null, side: null, line_start: 2, line_end: 3, quote: 'shared rule', snapshot: 'head', path: 'SKILL.md' };
   assert.doesNotThrow(() => agent.validateReference(ref, {}, { units: [] }));
+  assert.doesNotThrow(() => agent.validateReference({ ...ref, line_start: null, line_end: null }, {}, { units: [] }));
+  assert.throws(() => agent.validateReference({ ...ref, line_start: null }, {}, { units: [] }), /snapshot reference range/);
+  assert.throws(() => agent.validateReference({ ...ref, line_start: 1, line_end: 201 }, {}, { units: [] }), /snapshot reference range/);
   assert.throws(() => agent.validateReference({ ...ref, unit_id: 'u1' }, {}, { units: [] }), /snapshot reference provenance/);
 });
 
@@ -393,6 +396,13 @@ test('snapshot references must match complete trusted file lines', async () => {
     const staleLine = { ...ref, line_start: 3, line_end: 3 };
     await assert.doesNotReject(agent.verifySnapshotReferences([{ references: [staleLine] }], { base: head, head }));
     assert.deepEqual([staleLine.line_start, staleLine.line_end], [2, 2]);
+    const broadRange = { ...ref, line_start: 1, line_end: 21 };
+    assert.doesNotThrow(() => agent.validateReference(broadRange, {}, { units: [] }));
+    await assert.doesNotReject(agent.verifySnapshotReferences([{ references: [broadRange] }], { base: head, head }));
+    assert.deepEqual([broadRange.line_start, broadRange.line_end], [2, 2]);
+    const noRange = { ...ref, line_start: null, line_end: null };
+    await assert.doesNotReject(agent.verifySnapshotReferences([{ references: [noRange] }], { base: head, head }));
+    assert.deepEqual([noRange.line_start, noRange.line_end], [2, 2]);
     await assert.rejects(agent.verifySnapshotReferences([{ references: [{ ...ref, quote: 'unwritten rule' }] }], { base: head, head }), /Review evidence incomplete/);
     await fs.appendFile(path.join(head, 'SKILL.md'), '--performance also produces a report\n');
     await assert.rejects(agent.verifySnapshotReferences([{ references: [{ ...ref, line_start: 4, line_end: 4 }] }], { base: head, head }), /Review evidence incomplete/);
@@ -570,6 +580,16 @@ test('batch validation requires exact ID accounting and matching finding provena
   for (const finding of [null, { ...batchFinding, unit_ids: [] }, { ...batchFinding, unit_ids: ['u2'] }, { ...batchFinding, path: 'other.js' }, { ...batchFinding, view: 'base_head' }, { ...batchFinding, fix: '' }, { ...batchFinding, category: 'unknown' }]) {
     assert.throws(() => agent.validateBatchResult({ ...completeBatch, findings: [finding] }, batchU1), /Review evidence incomplete/);
   }
+});
+
+test('findings may cite changed supporting files while retaining a primary changed anchor', () => {
+  const related = { id: 'u2', path: 'src/b.js', views: ['pr'], evidence: 'Path: src/b.js\nPR diff (modified)\n@@ -1 +1 @@\n-old helper\n+new helper' };
+  const batch = { ids: ['u1', 'u2'], units: [batchU1.units[0], related] };
+  const support = { ...batchFinding.references[0], unit_id: 'u2', quote: 'new helper' };
+  const finding = { ...batchFinding, unit_ids: ['u1', 'u2'], references: [batchFinding.references[0], support] };
+  assert.deepEqual(agent.validateBatchResult({ reviewed_unit_ids: batch.ids, findings: [finding] }, batch), [finding]);
+  assert.throws(() => agent.validateBatchResult({ reviewed_unit_ids: batch.ids, findings: [{ ...finding, references: [support] }] }, batch), /finding changed anchor/);
+  assert.throws(() => agent.validateBatchResult({ reviewed_unit_ids: batch.ids, findings: [{ ...finding, references: [batchFinding.references[0], { ...support, quote: 'missing' }] }] }, batch), /diff reference quote absent/);
 });
 
 test('batch review retries once, runs sequentially, and enforces the shared deadline', async () => {
