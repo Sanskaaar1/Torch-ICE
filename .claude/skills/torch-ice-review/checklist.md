@@ -45,7 +45,8 @@ Torch-ICE's own PRs, not accelerator backends).
   different capability outside accelerator evaluation entirely (see
   "Framework vs. Evaluation Dimension" above)
 - [ ] **Flag syntax documented** — `SKILL.md` shows invocation examples for
-  the default run, the new flag alone, and the combined (`--all`) run
+  the default run, the new flag, and the combined (`--all`) run; preserve the
+  flag's documented behavior if it also produces the base assessment
 - [ ] **Default invocation unchanged** — running the skill with no flags
   still produces only the base functional evaluation; a new dimension is
   never folded into the default
@@ -177,6 +178,11 @@ Overall %:      sum(section_pct * weight_r) / sum(weight_r) * 100
 - [ ] **Unverifiable items are marked, not skipped** — a new checklist/EVAL
   pair handles items it can't check (e.g. "CI pipeline") by marking them
   "Requires manual verification," not omitting them or guessing a result
+- [ ] **Shared execution rules explicitly apply to dimensions** — if probe
+  isolation, partial reports, manual-verification handling, or filtering
+  internal instructions is defined in `SKILL.md` or the parent framework's
+  `EVAL.md`, a new dimension `EVAL.md` must explicitly incorporate those
+  shared rules; distinguish missing local incorporation from missing behavior
 - [ ] **`plugin.json`'s skills path unchanged** (`./skills/`) — this is the
   one field the plugin loader uses to discover every skill in the repo
 - [ ] **Checklist refinements preserve table structure** — content fixes and
