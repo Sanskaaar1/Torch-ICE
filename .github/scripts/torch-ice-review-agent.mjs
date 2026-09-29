@@ -204,7 +204,7 @@ export function renderFindings({ findings, pr, reviewMode }) {
   // XML-escape layer added when untrusted source is sent to the model.
   const code = (value) => `\`${unescapeContext(value).replace(/`/g, '').replace(/\s+/g, ' ')}\``;
   const render = (selected) => selected.map((finding, index) => {
-    const refs = finding.references.map((ref) => ref.kind === 'snapshot' ? `${ref.snapshot} ${code(ref.path)} line ${ref.line_start}: ${code(ref.quote)}`
+    const refs = finding.references.map((ref) => ref.kind === 'snapshot' ? `${ref.snapshot} ${code(ref.path)} ${ref.line_end === ref.line_start ? `line ${ref.line_start}` : `lines ${ref.line_start}-${ref.line_end}`}: ${code(ref.quote)}`
       : `${ref.view === 'base_head' ? 'current base to head' : 'PR diff'} ${ref.kind === 'metadata' ? 'metadata' : `lines ${ref.line_start}${ref.line_end === ref.line_start ? '' : `-${ref.line_end}`} (${ref.side})`}: ${code(ref.quote)}`).join('; ');
     return `### Finding ${index + 1} (${finding.severity})\n\n${inline(finding.impact)}\n\n- ${code(finding.path)} (${refs}): ${inline(finding.evidence)}\n\nSuggested fix: ${inline(finding.fix)}`;
   }).join('\n\n');

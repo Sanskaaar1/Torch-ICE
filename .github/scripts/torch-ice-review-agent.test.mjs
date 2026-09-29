@@ -536,6 +536,15 @@ test('renderer decodes one context-escape layer in validated source quotes', () 
   assert.doesNotMatch(output, /&amp;lt;|&amp;gt;/);
 });
 
+test('renderer shows the full range for a verified multiline snapshot quote', () => {
+  const finding = { ...batchFinding, references: [batchFinding.references[0], {
+    kind: 'snapshot', unit_id: null, view: null, side: null, line_start: 103, line_end: 106,
+    quote: 'Private backend\nNarrative research', snapshot: 'head', path: 'SKILL.md',
+  }] };
+  const output = agent.renderFindings({ findings: [finding], pr: { number: 10 }, reviewMode: 'general' });
+  assert.match(output, /head `SKILL\.md` lines 103-106: `Private backend Narrative research`/);
+});
+
 test('batch validation requires exact ID accounting and matching finding provenance', () => {
   assert.equal(typeof agent.validateBatchResult, 'function');
   assert.deepEqual(agent.validateBatchResult(completeBatch, batchU1), []);
