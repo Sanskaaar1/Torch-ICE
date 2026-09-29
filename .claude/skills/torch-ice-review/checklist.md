@@ -150,6 +150,15 @@ Overall %:      sum(section_pct * weight_r) / sum(weight_r) * 100
 
 ## General Conventions
 
+- [ ] **Performance percentiles have enough measurements** — if a new
+  performance `EVAL.md` asks for p95 or another tail percentile, it must
+  distinguish warmup from measured runs and require enough independent
+  measurements for the claimed percentile to be useful; five runs do not
+  support a meaningful p95 estimate
+- [ ] **Accelerator timing accounts for asynchronous work** — a new
+  performance `EVAL.md` must require synchronization around host timers,
+  completed device events, or a benchmark harness with equivalent timing
+  guarantees; recording only launch time is inaccurate
 - [ ] **Reports target `torch-ice-report/`** — the git-ignored output
   directory
 - [ ] **README updated when the assessment surface changes** — a new skill

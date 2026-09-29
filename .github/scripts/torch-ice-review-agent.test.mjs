@@ -1,6 +1,7 @@
 import test from 'node:test';
 import * as agent from './torch-ice-review-agent.mjs';
 import { packReviewBatches } from './torch-ice-review-evidence.mjs';
+import { liveTrial, prepareFixture } from './torch-ice-review-quality-replay.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -345,7 +346,127 @@ test('history retains prior successful bot findings only as lower-priority conte
 
 const batchU1 = { ids: ['u1'], evidence: 'PR diff: src/a.js', units: [{ id: 'u1', path: 'src/a.js', views: ['pr'] }] };
 const completeBatch = { reviewed_unit_ids: ['u1'], findings: [] };
-const batchFinding = { unit_ids: ['u1'], category: 'general', view: 'pr', path: 'src/a.js', location: 'line 1', evidence: 'changed call', impact: 'fails', fix: 'guard it' };
+const batchFinding = { unit_ids: ['u1'], category: 'general', view: 'pr', path: 'src/a.js', evidence: 'changed call', impact: 'fails', fix: 'guard it' };
+
+test('loads canonical architecture checks and records general checks in every review', async () => {
+  const checklist = await fs.readFile('.claude/skills/torch-ice-review/checklist.md', 'utf8');
+  const checks = agent.requiredReviewChecks(checklist, 'framework-assessment');
+  assert.ok(checks.some((check) => check.label === 'Probes are failure-isolated'));
+  assert.ok(checks.some((check) => check.label === 'Dimension `EVAL.md` loads only when its flag is active'));
+  assert.ok(checks.some((check) => check.id === 'general-performance'));
+  assert.equal(new Set(checks.map((check) => check.id)).size, checks.length);
+  assert.deepEqual(agent.requiredReviewChecks(checklist, 'general').map((check) => check.id),
+    ['general-correctness', 'general-regressions', 'general-security', 'general-performance']);
+});
+
+test('local replay uses the production stage instructions', () => {
+  assert.match(agent.batchStageInstructions('trusted', false), /every trusted check ID exactly once/);
+  assert.match(agent.batchStageInstructions('trusted', true), /previous attempt failed validation/);
+  assert.match(agent.consolidationStageInstructions('trusted'), /Group supported findings/);
+});
+
+test('rejects missing or unresolved checks and findings without changed-line anchors', () => {
+  const unit = { id: 'u1', path: 'src/a.js', views: ['pr'], evidence: 'Path: src/a.js\nPR diff (modified)\n@@ -1 +1 @@\n-old\n+new' };
+  const batch = { ids: ['u1'], units: [unit], checks: [{ id: 'general-correctness' }] };
+  const anchor = { kind: 'diff', unit_id: 'u1', view: 'pr', side: 'new', line_start: 1, line_end: 1, quote: 'new', snapshot: null, path: null };
+  const finding = { ...batchFinding, severity: 'blocking', references: [anchor] };
+  const check = { id: 'general-correctness', status: 'violation', reason: 'new call fails', references: [anchor], finding_indexes: [0] };
+  const valid = { reviewed_unit_ids: ['u1'], checks: [check], findings: [finding] };
+  assert.deepEqual(agent.validateBatchResult(valid, batch), [finding]);
+  assert.throws(() => agent.validateBatchResult({ ...valid, checks: [] }, batch), /Review evidence incomplete/);
+  assert.throws(() => agent.validateBatchResult({ ...valid, checks: [{ ...check, status: 'unresolved' }] }, batch), /Review evidence incomplete/);
+  assert.throws(() => agent.validateBatchResult({ ...valid, checks: [check, check] }, batch), /Review evidence incomplete/);
+  assert.throws(() => agent.validateBatchResult({ ...valid, checks: [{ ...check, references: [] }] }, batch), /Review evidence incomplete/);
+  assert.throws(() => agent.validateBatchResult({ ...valid, findings: [{ ...finding, references: [{ ...anchor, line_start: 2 }] }] }, batch), /Review evidence incomplete/);
+  assert.throws(() => agent.validateBatchResult({ ...valid, findings: [{ ...finding, references: [{ ...anchor, side: 'old' }] }] }, batch), /Review evidence incomplete/);
+  assert.throws(() => agent.validateBatchResult({ ...valid, findings: [{ ...finding, references: [] }] }, batch), /Review evidence incomplete/);
+});
+
+test('missing check coverage gets exactly one correction attempt', async () => {
+  const batch = { ids: ['u1'], units: [{ id: 'u1', path: 'README.md', views: ['pr'], evidence: 'Path: README.md\nPR diff (modified)\n@@ -1 +1 @@\n-old\n+new' }], checks: [{ id: 'general-correctness' }] };
+  const valid = { reviewed_unit_ids: ['u1'], checks: [{ id: 'general-correctness', status: 'not_applicable', reason: 'documentation only', references: [], finding_indexes: [] }], findings: [] };
+  const attempts = [];
+  const result = await agent.reviewBatches([batch], async (_, attempt) => { attempts.push(attempt); return attempt ? valid : { ...valid, checks: [] }; }, Date.now() + 60_000);
+  assert.deepEqual(attempts, [0, 1]);
+  assert.deepEqual(result, []);
+  await assert.rejects(agent.reviewBatches([batch], async () => ({ ...valid, checks: [] }), Date.now() + 60_000), /Review evidence incomplete/);
+});
+
+test('snapshot references must match complete trusted file lines', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-citation-'));
+  const head = path.join(root, 'head');
+  try {
+    await fs.mkdir(head);
+    await fs.writeFile(path.join(head, 'SKILL.md'), 'first\n--performance also produces a report\n');
+    const ref = { kind: 'snapshot', unit_id: null, view: null, side: null, line_start: 2, line_end: 2, quote: 'also produces', snapshot: 'head', path: 'SKILL.md' };
+    await assert.doesNotReject(agent.verifySnapshotReferences([{ references: [ref] }], { base: head, head }));
+    await assert.rejects(agent.verifySnapshotReferences([{ references: [{ ...ref, line_start: 3, line_end: 3 }] }], { base: head, head }), /Review evidence incomplete/);
+    await assert.rejects(agent.verifySnapshotReferences([{ references: [{ ...ref, path: '../outside' }] }], { base: head, head }), /Review evidence incomplete/);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('old-side citations and metadata-only changes retain real anchors', () => {
+  const ref = (kind, side, quote) => ({ kind, unit_id: 'u1', view: 'pr', side, line_start: side ? 7 : null, line_end: side ? 7 : null, quote, snapshot: null, path: null });
+  const check = (reference) => ({ id: 'general-regressions', status: 'violation', reason: 'removed guard', references: [reference], finding_indexes: [0] });
+  const verify = (evidence, reference) => {
+    const batch = { ids: ['u1'], units: [{ id: 'u1', path: 'src/a.js', views: ['pr'], evidence }], checks: [{ id: 'general-regressions' }] };
+    const finding = { ...batchFinding, severity: 'major', references: [reference] };
+    return agent.validateBatchResult({ reviewed_unit_ids: ['u1'], checks: [check(reference)], findings: [finding] }, batch);
+  };
+  assert.equal(verify('Path: src/a.js\nPR diff (modified)\n@@ -7 +7 @@\n-old guard\n+new call', ref('diff', 'old', 'old guard')).length, 1);
+  assert.equal(verify('Path: src/a.js\nPR diff (modified)\nold mode 100644\nnew mode 100755', ref('metadata', null, 'new mode 100755')).length, 1);
+  assert.throws(() => verify('Path: src/a.js\nPR diff (modified)\nold mode 100644\nnew mode 100755', ref('metadata', null, 'Path: src/a.js')), /Review evidence incomplete/);
+  assert.throws(() => verify('Path: src/a.js\nPR diff (modified)\n@@ -7 +7 @@\n-old guard\n+new call', ref('metadata', null, 'old guard')), /Review evidence incomplete/);
+});
+
+test('pinned replay fixtures produce original, corrected, and general-only evidence', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-fixtures-'));
+  try {
+    for (const name of ['original', 'corrected', 'general']) {
+      const fixture = await prepareFixture(name, path.join(root, name));
+      assert.ok(fixture.batches.length);
+      assert.equal(fixture.reviewMode, name === 'general' ? 'general' : 'framework-assessment');
+      if (name === 'original') assert.match(fixture.units.map((unit) => unit.evidence).join('\n'), /at least five timed runs/);
+      if (name === 'corrected') assert.match(fixture.units.map((unit) => unit.evidence).join('\n'), /at least 100 independent measured runs/);
+    }
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('local model replay uses review stages without calling GitHub', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-replay-'));
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  try {
+    const prepared = await prepareFixture('general', root);
+    const checklist = await fs.readFile('.claude/skills/torch-ice-review/checklist.md', 'utf8');
+    globalThis.fetch = async (url, options) => {
+      assert.equal(url, 'https://api.openai.com/v1/responses');
+      const body = JSON.parse(options.body);
+      requests.push(body.text.format.name);
+      const output = body.text.format.name === 'review_batch'
+        ? { reviewed_unit_ids: prepared.batches[0].ids, checks: agent.requiredReviewChecks(checklist, 'general').map((check) => ({ id: check.id, status: 'not_applicable', reason: 'documentation only', references: [], finding_indexes: [] })), findings: [] }
+        : { groups: [] };
+      return { ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify(output), usage: { input_tokens: 1 } }) };
+    };
+    const usage = [];
+    const result = await liveTrial(prepared, 'trusted instructions', checklist, usage);
+    assert.deepEqual(requests, ['review_batch', 'review_consolidation']);
+    assert.match(result.markdown, /No actionable General Review findings/);
+    assert.equal(usage.length, 2);
+  } finally { globalThis.fetch = originalFetch; await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('renders blocking findings first and a decisive advisory recommendation', async () => {
+  const findings = [
+    { ...batchFinding, severity: 'minor', references: [{ kind: 'metadata', unit_id: 'u1', view: 'pr', side: null, line_start: null, line_end: null, quote: 'changed call', snapshot: null, path: null }] },
+    { ...batchFinding, severity: 'blocking', path: 'src/b.js', evidence: 'missing dispatch', references: [{ kind: 'metadata', unit_id: 'u2', view: 'pr', side: null, line_start: null, line_end: null, quote: 'missing dispatch', snapshot: null, path: null }] },
+  ];
+  const output = await agent.consolidateFindings({ findings, pr: { number: 9 }, reviewMode: 'general', deadline: Date.now() + 60_000,
+    requestConsolidation: async () => ({ groups: [{ finding_ids: ['f1'] }, { finding_ids: ['f2'] }] }) });
+  assert.ok(output.indexOf('missing dispatch') < output.indexOf('changed call'));
+  assert.match(output, /Changes needed before merge; advisory review/);
+  assert.match(output, /`src\/a\.js`/);
+});
 
 test('batch validation requires exact ID accounting and matching finding provenance', () => {
   assert.equal(typeof agent.validateBatchResult, 'function');
@@ -391,15 +512,14 @@ test('complete batch evidence is never truncated or escaped twice', () => {
   assert.throws(() => buildReviewInput({ pr: { number: 1 }, files: [], history: [], batchEvidence: 'x'.repeat(256_000) }), /fixed section budgets/);
 });
 
-test('batch dispatch preserves framework pair classification across split batches', () => {
-  assert.equal(typeof agent.selectBatchReviewMode, 'function');
+test('full-PR dispatch remains framework assessment when units split across batches', () => {
   const files = [
     { filename: 'frameworks/new/EVAL.md', status: 'added' },
     { filename: 'frameworks/new/checklist.md', status: 'added' },
     { filename: 'frameworks/unrelated/EVAL.md', status: 'added' },
   ];
-  assert.equal(agent.selectBatchReviewMode([files[0]], files), 'framework-assessment');
-  assert.equal(agent.selectBatchReviewMode([files[2]], files), 'general');
+  assert.equal(selectReviewMode(files), 'framework-assessment');
+  assert.equal(selectReviewMode([files[2]]), 'general');
 });
 
 test('rejects PEM spans split across review units before preparing any model evidence', () => {
@@ -424,7 +544,7 @@ test('complete two-view pipeline retains direct-only regressions and gates succe
   const batches = packReviewBatches(agent.prepareReviewUnits(inventory));
   assert.ok(batches.some((batch) => batch.evidence.includes('src/guard.js')));
   const requestBatch = async (batch) => ({ reviewed_unit_ids: batch.ids, findings: batch.units.filter((unit) => unit.path === 'src/guard.js').map((unit) => ({
-    ...batchFinding, unit_ids: [unit.id], view: 'base_head', path: unit.path, location: 'deleted line 1', evidence: 'guard deleted', impact: 'validation bypassed', fix: 'rebase onto main',
+    ...batchFinding, unit_ids: [unit.id], view: 'base_head', path: unit.path, evidence: 'guard deleted', impact: 'validation bypassed', fix: 'rebase onto main',
   })) });
   const originalFetch = globalThis.fetch;
   const posted = [];

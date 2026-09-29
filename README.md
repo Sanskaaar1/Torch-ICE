@@ -243,11 +243,19 @@ packed into at most eight batches of up to 20,000 characters each, totaling
 at most 160,000 characters. An indivisible evidence unit exceeding the
 20,000-character limit fails the review. Each request uses fixed section
 budgets under a 256,000-character ceiling (about 64k tokens).
-Every unit must be accounted for before a final tools-disabled request groups
-validated findings. The application renders an advisory Markdown review from
-those original findings. Missing evidence, exceeded limits, invalid results,
-or failed consolidation produce a failure comment without partial findings.
+Every unit and applicable checklist check must be accounted for before a final
+tools-disabled request groups validated findings. Changed-line citations and
+supporting snapshot quotes are checked against pinned evidence. The application
+sorts findings by severity and renders an advisory Markdown review from those
+original findings. Missing evidence, exceeded limits, invalid results, or
+failed consolidation produce a failure comment without partial findings.
 The base and head SHAs are checked again immediately before posting success.
+
+Review-quality fixtures can be checked locally with
+`node .github/scripts/torch-ice-review-quality-replay.mjs --offline`. With
+`OPENAI_API_KEY` configured, omit `--offline` to run local model replays of
+PR #9 and corrected/control fixtures. The runner writes results under the
+system temporary directory and never posts to GitHub.
 
 Repository administrators must configure the `OPENAI_API_KEY` Actions secret.
 The workflow requires only `contents: read`, `pull-requests: write`, and
