@@ -207,8 +207,8 @@ comment:
 
 The command must be the first non-whitespace content on a comment line. Only
 repository owners may add `--force` to request another review of the same PR
-head. Successful forced reviews have a 15-minute cooldown and a maximum of two
-successful runs per PR head. Failures and timeouts consume neither:
+head. Successful forced reviews have a 15-minute cooldown. Failures and
+timeouts do not start the cooldown:
 
 ```
 @torch-ice-review-agent --force re-check the latest changes
@@ -237,14 +237,12 @@ store, or persistent external memory is used. The agent reviews two comparison
 views: the GitHub PR diff and the current base directly against the PR head,
 including direct-only paths that can expose stale-branch regressions. Textual
 evidence includes lockfiles, vendor code, build logic, generated artifacts,
-and SVGs; binary-change metadata is retained. Complete evidence units are
-packed into at most eight batches of up to 20,000 characters each, totaling
-at most 160,000 characters. An indivisible evidence unit exceeding the
-20,000-character limit fails the review. Each request uses fixed section
-budgets under a 256,000-character ceiling (about 64k tokens).
-PRs whose evidence fits in one packet need one model review response. Larger
-diffs use bounded sequential packets with the same deadline and retry limits.
-Each packet accounts for its assigned evidence units. Changed-line citations
+and SVGs; binary-change metadata is retained. Complete evidence units of at
+most 20,000 characters are sent together in one review packet, with a
+160,000-character total evidence limit. An indivisible unit exceeding its limit
+fails the review. The request has a 256,000-character ceiling (about 64k
+tokens) and one correction attempt. The response accounts for every evidence
+unit. Changed-line citations
 and supporting snapshot quotes are checked against pinned evidence. The
 application removes exact duplicates, sorts findings by severity, and renders
 the advisory Markdown. Missing evidence, exceeded limits, or invalid results

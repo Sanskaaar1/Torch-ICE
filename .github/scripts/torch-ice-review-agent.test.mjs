@@ -321,7 +321,7 @@ const batchFinding = { unit_ids: ['u1'], category: 'general', view: 'pr', path: 
   references: [{ kind: 'diff', unit_id: 'u1', view: 'pr', side: 'new', line_start: 1, line_end: 1, quote: 'new', snapshot: null, path: null }] };
 
 test('local replay uses the production stage instructions', () => {
-  assert.match(agent.batchStageInstructions('trusted', false), /every assigned unit ID exactly once/);
+  assert.match(agent.batchStageInstructions('trusted', false), /every Unit ID marked in the evidence exactly once/);
   assert.match(agent.batchStageInstructions('trusted', true), /previous attempt failed validation/);
   assert.match(agent.batchStageInstructions('trusted', true, 'diff reference quote'), /exact substring from the changed line/);
   assert.match(agent.batchStageInstructions('trusted', true, 'snapshot reference shape'), /snapshot path, line, and exact quote/);
@@ -577,7 +577,20 @@ test('complete batch evidence is never truncated or escaped twice', () => {
   assert.throws(() => buildReviewInput({ pr: { number: 1 }, files: [], history: [], batchEvidence: 'x'.repeat(256_000) }), /fixed section budgets/);
 });
 
-test('full-PR dispatch remains framework assessment when units split across batches', () => {
+test('a full review packet keeps diff evidence when optional history fills the input budget', () => {
+  const evidence = 'D'.repeat(160_000);
+  const result = buildReviewInput({
+    pr: { number: 1, title: 'T'.repeat(2_000), body: 'B'.repeat(8_000) },
+    files: Array.from({ length: 100 }, (_, index) => ({ filename: `${index}-${'p'.repeat(200)}.txt`, additions: 1, deletions: 0 })),
+    fileContext: 'C'.repeat(24_000), history: [{ kind: 'issue', author: 'owner', body: 'H'.repeat(32_000) }],
+    batchEvidence: evidence, checklist: 'K'.repeat(20_000), reviewMode: 'framework-assessment', reservedChars: 10_000,
+  });
+  assert.ok(result.input.includes(evidence));
+  assert.ok(result.input.length <= 246_000);
+  assert.equal(result.truncated, true);
+});
+
+test('full-PR dispatch remains framework assessment across evidence units', () => {
   const files = [
     { filename: 'frameworks/new/EVAL.md', status: 'added' },
     { filename: 'frameworks/new/checklist.md', status: 'added' },

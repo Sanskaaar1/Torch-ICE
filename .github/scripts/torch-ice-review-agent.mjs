@@ -29,7 +29,6 @@ const INPUT_MAX_CHARS = 256_000;
 const INITIAL_MAX_OUTPUT_TOKENS = 8_192;
 const RETRY_MAX_OUTPUT_TOKENS = 8_192;
 const FORCE_COOLDOWN_MS = 15 * 60 * 1_000;
-const FORCE_MAX_PER_HEAD = 2;
 const BLOCKED_LABELS = new Set(['security', 'private', 'do-not-ai-review']);
 const BOT_MARKER = '<!-- torch-ice-review-agent: success head_sha=';
 const FINAL_MARKER = /(?:^|\r?\n)<!-- torch-ice-review-agent: [^\r\n]* -->\r?$/;
@@ -161,7 +160,7 @@ export function parseBatchResponse(response) {
 
 export function batchStageInstructions(instructions, attempt, retryReason) {
   const correction = attempt ? ` The previous attempt failed validation; return a complete corrected result. Preserve prior substantive findings while correcting their citations.${retryReason === 'diff reference quote' ? ' Copy a short exact substring from the changed line.' : ''}${retryReason === 'snapshot reference shape' ? ' Check snapshot path, line, and exact quote.' : ''}` : '';
-  return `${instructions}\n\nTrusted stage: review. Return only review_batch JSON. Review every assigned unit ID exactly once. Report only actionable findings with a changed-source diff or metadata anchor. Trace related flag, checklist, EVAL, and report paths through snapshot tools where needed. For a unique diff quote, set line_start and line_end to null so the controller resolves its source line. Snapshot quotes may use the XML escaping shown in supplied context. Use plain text in finding fields; the renderer formats validated references.${correction}`;
+  return `${instructions}\n\nTrusted stage: review. Return only review_batch JSON. Review every Unit ID marked in the evidence exactly once. Report only actionable findings with a changed-source diff or metadata anchor. Trace related flag, checklist, EVAL, and report paths through snapshot tools where needed. For a unique diff quote, set line_start and line_end to null so the controller resolves its source line. Snapshot quotes may use the XML escaping shown in supplied context. Use plain text in finding fields; the renderer formats validated references.${correction}`;
 }
 
 export async function reviewBatches(batches, requestBatch, deadline) {
@@ -311,7 +310,8 @@ function escapeUntrustedSection(value) {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export function buildReviewInput({ commandPrompt, pr, headSha, files, fileContext = '', diff, batchEvidence, history, checklist, reviewMode = 'general' }) {
+export function buildReviewInput({ commandPrompt, pr, headSha, files, fileContext = '', diff, batchEvidence, history, checklist, reviewMode = 'general', reservedChars = 0 }) {
+  const limit = INPUT_MAX_CHARS - reservedChars;
   const raw = {
     command: String(commandPrompt ?? '') || '(No additional prompt.)',
     metadata: JSON.stringify({ number: pr.number, title: truncate(pr.title, PR_TITLE_MAX_CHARS), body: truncate(pr.body, PR_BODY_MAX_CHARS), head_sha: headSha }),
@@ -329,14 +329,20 @@ export function buildReviewInput({ commandPrompt, pr, headSha, files, fileContex
   };
   const section = (tag, value) => `<${tag}>\n${value}\n</${tag}>`;
   const frameworkCategories = 'Skill Structure\nFramework Nesting\nScoring Consistency\nDispatch & Orchestration\nGeneral Conventions';
-  const parts = [section('trusted_review_dispatch', reviewMode), section('untrusted_command', values.command), section('untrusted_pr_metadata', values.metadata),
+  const compose = () => [section('trusted_review_dispatch', reviewMode), section('untrusted_command', values.command), section('untrusted_pr_metadata', values.metadata),
     section('untrusted_changed_files', values.files),
     ...(values.fileContext ? [section('untrusted_pr_file_context', values.fileContext)] : []),
     ...(reviewMode === 'framework-assessment' ? [section('trusted_framework_assessment_categories', frameworkCategories)] : []),
     ...(reviewMode === 'framework-assessment' ? [section('trusted_architecture_checklist', values.checklist)] : []),
-    section('untrusted_review_history', values.history), section('untrusted_pr_diff', values.diff)];
-  const input = parts.join('\n\n');
-  if (input.length > INPUT_MAX_CHARS) throw new Error('Review input exceeded its fixed section budgets.');
+    section('untrusted_review_history', values.history), section('untrusted_pr_diff', values.diff)].join('\n\n');
+  let input = compose();
+  for (const key of ['history', 'fileContext']) {
+    if (input.length <= limit) break;
+    const remaining = Math.max(0, values[key].length - (input.length - limit));
+    values[key] = remaining > 12 ? truncate(values[key], remaining) : '';
+    input = compose();
+  }
+  if (input.length > limit) throw new Error('Review input exceeded its fixed section budgets.');
   return { input, truncated: Object.keys(raw).some((key) => key !== 'diff' && values[key] !== escaped[key]) };
 }
 
@@ -719,11 +725,6 @@ async function main() {
       await postComment(api, prNumber, 'A review for this PR head ran recently. Wait 15 minutes before forcing another review.\n\n<!-- torch-ice-review-agent: rejected reason=force_cooldown -->');
       return;
     }
-    if (command.force && successfulForcedReviews.length >= FORCE_MAX_PER_HEAD) {
-      log('review_rejected', { pr_number: prNumber, reason: 'force_limit', head_sha: headSha });
-      await postComment(api, prNumber, 'This PR head has reached its limit of two forced reviews. Push a new commit before requesting another.\n\n<!-- torch-ice-review-agent: rejected reason=force_limit -->');
-      return;
-    }
     const priorSuccess = issueComments.some((comment) => isSuccessfulReviewResult(comment, headSha));
     log('review_context', { pr_number: prNumber, head_sha: headSha, changed_files: files.length, diff_characters_received: rawDiff.length, deduplication_skipped: priorSuccess && !command.force });
     if (priorSuccess && !command.force) {
@@ -763,18 +764,10 @@ async function main() {
         ? [{ filename: 'SKILL.md' }, ...assessmentFiles, ...batchFiles.filter((file) => file.filename !== 'SKILL.md' && !assessmentFiles.includes(file))]
         : batchFiles;
       const fileContext = await readFileContext(snapshots.head, contextFiles);
-      const reviewInput = buildReviewInput({ commandPrompt: command.prompt, pr, headSha, files: batchFiles, fileContext,
-        batchEvidence: batch.evidence, history: history.included, checklist, reviewMode });
-      let evidenceOffset = 0;
-      const manifest = escapeUntrustedSection(JSON.stringify(batch.units.map((unit) => {
-        const start = evidenceOffset;
-        evidenceOffset += evidenceById.get(unit.id).length;
-        const assigned = { ...unit, evidence_start: start, evidence_end: evidenceOffset };
-        evidenceOffset += 2; // The packer joins complete units with two newlines.
-        return assigned;
-      })));
       const priorReview = retryDraft ? `\n\n<untrusted_prior_review>\n${escapeUntrustedSection(JSON.stringify(retryDraft))}\n</untrusted_prior_review>` : '';
-      const input = redactSensitiveText(`${reviewInput.input}\n\n<untrusted_assigned_units>\n${manifest}\n</untrusted_assigned_units>${priorReview}`).text;
+      const reviewInput = buildReviewInput({ commandPrompt: command.prompt, pr, headSha, files: batchFiles, fileContext,
+        batchEvidence: batch.evidence, history: history.included, checklist, reviewMode, reservedChars: priorReview.length });
+      const input = redactSensitiveText(`${reviewInput.input}${priorReview}`).text;
       if (input.length > INPUT_MAX_CHARS) throw new Error('Review input exceeded its fixed section budgets.');
       const batchInstructions = batchStageInstructions(instructions, attempt, retryReason);
       const exploration = await runExplorationLoop(async (requestInput, { toolChoice = 'auto' } = {}) => {

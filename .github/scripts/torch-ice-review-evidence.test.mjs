@@ -126,15 +126,17 @@ test('splits long patches at complete hunks or lines and packs without loss', ()
   assert.ok(units.length > 1);
   assert.ok(units.every((unit) => unit.path === 'long.js' && unit.views[0] === 'pr' && unit.evidence.length <= 20_000));
   const batches = packReviewBatches(units);
+  assert.equal(batches.length, 1);
   assert.deepEqual(batches.flatMap((batch) => batch.ids), units.map((unit) => unit.id));
-  assert.ok(batches.every((batch) => batch.evidence.length <= 20_000));
+  assert.ok(batches[0].evidence.length > 20_000);
+  assert.ok(units.every((unit) => batches[0].evidence.includes(`Unit ${unit.id}\n${unit.evidence}`)));
   assert.match(batches.map((batch) => batch.evidence).join(''), /\+b{9000}/);
   assert.match(batches.map((batch) => batch.evidence).join(''), /\+d{9000}/);
 });
 
-test('rejects evidence needing a ninth batch', () => {
+test('rejects a review packet beyond the total evidence limit', () => {
   const units = Array.from({ length: 9 }, (_, index) => ({ id: `u${index + 1}`, path: `${index}.js`, views: ['pr'], evidence: 'x'.repeat(20_000) }));
-  assert.throws(() => packReviewBatches(units), /Review evidence incomplete: batch limit/);
+  assert.throws(() => packReviewBatches(units), /Review evidence incomplete: evidence limit/);
 });
 
 test('bounds complete diff lines by their escaped size before packing', () => {

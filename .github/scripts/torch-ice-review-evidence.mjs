@@ -176,16 +176,14 @@ export function buildReviewUnits({ githubFiles, rawDiff, directEvidence }) {
 }
 
 export function packReviewBatches(units) {
-  const batches = [];
+  if (!units.length) return [];
+  const batch = { ids: [], units: [], evidence: '' };
   for (const unit of units) {
     if (unit.evidence.length > UNIT_LIMIT) throw incomplete('oversized unit');
-    const last = batches.at(-1);
-    if (!last || last.evidence.length + (last.evidence ? 2 : 0) + unit.evidence.length > UNIT_LIMIT) batches.push({ ids: [], units: [], evidence: '' });
-    const batch = batches.at(-1);
     batch.ids.push(unit.id);
     batch.units.push({ id: unit.id, path: unit.path, views: unit.views });
-    batch.evidence += `${batch.evidence ? '\n\n' : ''}${unit.evidence}`;
+    batch.evidence += `${batch.evidence ? '\n\n' : ''}Unit ${unit.id}\n${unit.evidence}`;
   }
-  if (batches.length > 8 || batches.reduce((sum, batch) => sum + batch.evidence.length, 0) > 160_000) throw incomplete('batch limit');
-  return batches;
+  if (batch.evidence.length > 160_000) throw incomplete('evidence limit');
+  return [batch];
 }

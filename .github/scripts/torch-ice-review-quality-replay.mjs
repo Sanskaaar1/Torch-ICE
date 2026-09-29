@@ -98,18 +98,10 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
       ? [{ filename: 'SKILL.md' }, ...assessmentFiles, ...batchFiles.filter((file) => file.filename !== 'SKILL.md' && !assessmentFiles.includes(file))]
       : batchFiles;
     const fileContext = await readFileContext(snapshots.head, contextFiles);
-    const input = buildReviewInput({ pr: { number: 9, title: fixture.name }, headSha: fixture.head, files: batchFiles,
-      batchEvidence: batch.evidence, fileContext, history: [], checklist, reviewMode }).input;
-    let offset = 0;
-    const manifest = batch.units.map((unit) => {
-      const start = offset;
-      offset += evidenceById.get(unit.id).length;
-      const result = { ...unit, evidence_start: start, evidence_end: offset };
-      offset += 2;
-      return result;
-    });
     const priorReview = retryDraft ? `\n\n<untrusted_prior_review>\n${JSON.stringify(retryDraft).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}\n</untrusted_prior_review>` : '';
-    const requestInput = redactSensitiveText(`${input}\n\n<untrusted_assigned_units>\n${JSON.stringify(manifest).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}\n</untrusted_assigned_units>${priorReview}`).text;
+    const input = buildReviewInput({ pr: { number: 9, title: fixture.name }, headSha: fixture.head, files: batchFiles,
+      batchEvidence: batch.evidence, fileContext, history: [], checklist, reviewMode, reservedChars: priorReview.length }).input;
+    const requestInput = redactSensitiveText(`${input}${priorReview}`).text;
     const stage = batchStageInstructions(instructions, attempt, retryReason);
     const exploration = await runExplorationLoop((turns, { toolChoice = 'auto' } = {}) => requestModel({ instructions: stage, schema: BATCH_RESULT_SCHEMA, name: 'review_batch', input: turns, deadline, usage,
       tools: EXPLORATION_TOOLS, toolChoice, maxOutputTokens: 8192 }), requestInput, snapshots, explorationBudget);
