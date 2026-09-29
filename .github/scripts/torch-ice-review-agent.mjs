@@ -86,7 +86,15 @@ export function validateReference(ref, finding, batch) {
     ref.line_start = ref.line_end = null;
   }
   const matches = lines.filter((line) => quoted(line.text, ref.quote));
-  if (!matches.length) incomplete('diff reference quote absent from assigned evidence');
+  if (!matches.length) {
+    const compact = (value) => value.replace(/`/g, '').replace(/\s+/g, ' ').trim();
+    const quote = compact(ref.quote);
+    const candidates = quote.length >= 12 ? lines.filter((line) => compact(line.text).includes(quote)) : [];
+    if (candidates.length !== 1) incomplete('diff reference quote absent from assigned evidence');
+    ref.quote = candidates[0].text.trim();
+    ref.line_start = ref.line_end = candidates[0].number;
+    return candidates[0].changed;
+  }
   const validRange = Number.isSafeInteger(ref.line_start) && Number.isSafeInteger(ref.line_end) && ref.line_start >= 1 && ref.line_end >= ref.line_start && ref.line_end - ref.line_start <= 19;
   const cited = validRange ? matches.filter((line) => line.number >= ref.line_start && line.number <= ref.line_end) : [];
   if (!cited.length) {

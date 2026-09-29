@@ -131,7 +131,7 @@ async function main() {
     path: finding.path, view: finding.view, unit_ids: finding.unit_ids,
     references: finding.references?.map((ref) => ({ kind: ref.kind, unit_id: ref.unit_id, view: ref.view, side: ref.side,
       snapshot: ref.snapshot, path: ref.path, line_start: ref.line_start, line_end: ref.line_end,
-      quote_length: ref.quote?.length, quote_has_newline: /[\r\n]/.test(ref.quote ?? '') })),
+      quote: ref.quote })),
   }));
   for (const name of FIXTURES) {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), `torch-ice-replay-${name}-`));
