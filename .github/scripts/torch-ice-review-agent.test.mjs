@@ -380,7 +380,7 @@ test('rejects missing or unresolved checks and findings without changed-line anc
   assert.throws(() => agent.validateBatchResult({ ...valid, checks: [{ ...check, status: 'unresolved' }] }, batch), /Review evidence incomplete/);
   assert.throws(() => agent.validateBatchResult({ ...valid, checks: [check, check] }, batch), /Review evidence incomplete/);
   assert.throws(() => agent.validateBatchResult({ ...valid, checks: [{ ...check, references: [] }] }, batch), /Review evidence incomplete/);
-  assert.throws(() => agent.validateBatchResult({ ...valid, findings: [{ ...finding, references: [{ ...anchor, line_start: 2 }] }] }, batch), /Review evidence incomplete/);
+  assert.throws(() => agent.validateBatchResult({ ...valid, findings: [{ ...finding, references: [{ ...anchor, quote: 'absent text' }] }] }, batch), /Review evidence incomplete/);
   assert.throws(() => agent.validateBatchResult({ ...valid, findings: [{ ...finding, references: [{ ...anchor, side: 'old' }] }] }, batch), /Review evidence incomplete/);
   assert.throws(() => agent.validateBatchResult({ ...valid, findings: [{ ...finding, references: [] }] }, batch), /Review evidence incomplete/);
 });
@@ -400,7 +400,7 @@ test('retry receives a safe citation correction after quote validation fails', a
   const attempts = [];
   await agent.reviewBatches([batch], async (_, attempt, reason) => {
     attempts.push([attempt, reason]);
-    if (!attempt) throw new Error('Review evidence incomplete: diff reference quote.');
+    if (!attempt) throw new Error('Review evidence incomplete: diff reference quote absent from assigned evidence.');
     return { reviewed_unit_ids: ['u1'], checks: [], findings: [] };
   }, Date.now() + 60_000);
   assert.deepEqual(attempts, [[0, undefined], [1, 'diff reference quote']]);
@@ -421,6 +421,14 @@ test('check citations may use context lines, while findings require a changed an
   const finding = { ...batchFinding, path: unit.path, view: 'pr', unit_ids: ['u1'], severity: 'major', references: [context] };
   const violation = { reviewed_unit_ids: ['u1'], checks: [{ ...passing.checks[0], status: 'violation', finding_indexes: [0] }], findings: [finding] };
   assert.throws(() => agent.validateBatchResult(violation, batch), /finding changed anchor/);
+});
+
+test('uniquely quoted diff lines correct stale model line numbers', () => {
+  const unit = { id: 'u1', path: 'src/a.js', views: ['pr'], evidence: 'Path: src/a.js\nPR diff (modified)\n@@ -1 +1 @@\n-old\n+new' };
+  const ref = { kind: 'diff', unit_id: 'u1', view: 'pr', side: 'new', line_start: 99, line_end: 120, quote: 'new', snapshot: null, path: null };
+  assert.equal(agent.validateReference(ref, { path: unit.path, view: 'pr', unit_ids: ['u1'] }, { units: [unit] }), true);
+  assert.deepEqual([ref.line_start, ref.line_end], [1, 1]);
+  assert.throws(() => agent.validateReference({ ...ref, quote: 'missing' }, { path: unit.path, view: 'pr', unit_ids: ['u1'] }, { units: [unit] }), /diff reference quote absent/);
 });
 
 test('snapshot references must match complete trusted file lines', async () => {

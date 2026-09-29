@@ -92,12 +92,20 @@ export function validateReference(ref, finding, batch) {
     if (ref.side !== null || ref.line_start !== null || ref.line_end !== null || !segment || /^@@ /m.test(segment) || !metadataLine) incomplete('metadata reference');
     return true;
   }
-  if (!['old', 'new'].includes(ref.side) || !Number.isSafeInteger(ref.line_start) || !Number.isSafeInteger(ref.line_end) || ref.line_start < 1 || ref.line_end < ref.line_start || ref.line_end - ref.line_start > 19) incomplete('diff reference range');
+  if (!['old', 'new'].includes(ref.side)) incomplete('diff reference side');
   const lines = changedLines(evidence, ref.view, ref.side);
+  const matches = lines.filter((line) => quoted(line.text, ref.quote));
+  if (!matches.length) incomplete('diff reference quote absent from assigned evidence');
+  const validRange = Number.isSafeInteger(ref.line_start) && Number.isSafeInteger(ref.line_end) && ref.line_start >= 1 && ref.line_end >= ref.line_start && ref.line_end - ref.line_start <= 19;
+  const cited = validRange ? matches.filter((line) => line.number >= ref.line_start && line.number <= ref.line_end) : [];
+  if (!cited.length) {
+    if (matches.length !== 1) incomplete('diff reference quote ambiguous');
+    ref.line_start = matches[0].number;
+    ref.line_end = matches[0].number;
+    return matches[0].changed;
+  }
   for (let number = ref.line_start; number <= ref.line_end; number++) if (!lines.some((line) => line.number === number)) incomplete('diff reference lines');
-  const matches = lines.filter((line) => line.number >= ref.line_start && line.number <= ref.line_end && quoted(line.text, ref.quote));
-  if (!matches.length) incomplete('diff reference quote');
-  return matches.some((line) => line.changed);
+  return cited.some((line) => line.changed);
 }
 
 export function validateQuality(result, batch) {
@@ -216,7 +224,7 @@ export async function reviewBatches(batches, requestBatch, deadline) {
       } catch (error) {
         if (attempt === 1) throw error;
         const message = String(error.message);
-        retryReason = message.includes('Review evidence incomplete: diff reference quote.') ? 'diff reference quote'
+        retryReason = message.includes('Review evidence incomplete: diff reference quote') ? 'diff reference quote'
           : message.includes('Review evidence incomplete: snapshot reference') ? 'snapshot reference shape' : undefined;
       }
     }
