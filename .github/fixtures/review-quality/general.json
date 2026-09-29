@@ -4,7 +4,7 @@
   "head": "1bb34963cb395d1d1c5e849a279ad38a06ad88c6",
   "files": ["README.md"],
   "edits": [
-    {"path":"README.md","find":"# Torch: Integration Capability Evaluation (ICE)","replace":"# Torch: Integration Capability Evaluation (ICE)\n\nDocumentation-only control fixture."}
+    {"path":"README.md","find":"A checklist-based evaluation tool","replace":"A checklist-based assessment tool"}
   ],
   "expected": []
 }

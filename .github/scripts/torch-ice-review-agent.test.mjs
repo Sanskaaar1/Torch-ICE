@@ -400,6 +400,15 @@ test('a formatted diff quote resolves only to a unique exact changed line', () =
   assert.throws(() => agent.validateReference({ ...ref, quote: 'performance/checklist.md when --all is requested' }, { path: unit.path, view: 'pr', unit_ids: ['u1'] }, batch), /diff reference quote absent/);
 });
 
+test('a quote spanning two adjacent changed lines resolves to their source range', () => {
+  const unit = { id: 'u1', path: 'EVAL.md', views: ['pr'], evidence: 'Path: EVAL.md\nPR diff (added)\n@@ -0,0 +1,2 @@\n+Compute Readiness by weighting\n+sections with 1 / level.' };
+  const batch = { ids: ['u1'], units: [unit] };
+  const ref = { kind: 'diff', unit_id: 'u1', view: 'pr', side: 'new', line_start: null, line_end: null, quote: 'Compute Readiness by weighting sections with 1 / level.', snapshot: null, path: null };
+  assert.equal(agent.validateReference(ref, { path: unit.path, view: 'pr', unit_ids: ['u1'] }, batch), true);
+  assert.deepEqual([ref.quote, ref.line_start, ref.line_end], ['Compute Readiness by weighting sections with 1 / level.', 1, 2]);
+  assert.throws(() => agent.validateReference({ ...ref, quote: 'Compute Readiness by averaging sections with 1 / level.' }, { path: unit.path, view: 'pr', unit_ids: ['u1'] }, batch), /diff reference quote absent/);
+});
+
 test('snapshot references must match complete trusted file lines', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-citation-'));
   const head = path.join(root, 'head');

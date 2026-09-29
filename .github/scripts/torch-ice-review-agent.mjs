@@ -89,10 +89,18 @@ export function validateReference(ref, finding, batch) {
   if (!matches.length) {
     const compact = (value) => value.replace(/`/g, '').replace(/\s+/g, ' ').trim();
     const quote = compact(ref.quote);
-    const candidates = quote.length >= 12 ? lines.filter((line) => compact(line.text).includes(quote)) : [];
+    const candidates = quote.length >= 12 ? lines.filter((line) => compact(line.text).includes(quote)).map((line) => ({ start: line.number, end: line.number, text: line.text.trim(), changed: line.changed })) : [];
+    if (!candidates.length && quote.length >= 12) for (let index = 0; index + 1 < lines.length; index++) {
+      const first = lines[index];
+      const second = lines[index + 1];
+      if (second.number === first.number + 1 && compact(`${first.text} ${second.text}`).includes(quote)) {
+        candidates.push({ start: first.number, end: second.number, text: `${first.text.trim()} ${second.text.trim()}`, changed: first.changed || second.changed });
+      }
+    }
     if (candidates.length !== 1) incomplete('diff reference quote absent from assigned evidence');
-    ref.quote = candidates[0].text.trim();
-    ref.line_start = ref.line_end = candidates[0].number;
+    ref.quote = candidates[0].text;
+    ref.line_start = candidates[0].start;
+    ref.line_end = candidates[0].end;
     return candidates[0].changed;
   }
   const validRange = Number.isSafeInteger(ref.line_start) && Number.isSafeInteger(ref.line_end) && ref.line_start >= 1 && ref.line_end >= ref.line_start && ref.line_end - ref.line_start <= 19;
