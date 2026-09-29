@@ -3,6 +3,7 @@ name: Review Agent
 on:
   issue_comment:
     types: [created]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -18,6 +19,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  replay:
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out trusted default branch
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch pinned PR #9 fixture commit
+        run: git fetch --no-tags origin 134115efd4be8377a933b94894d4616907e3f5df
+
+      - name: Run local review-quality replay without GitHub writes
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: node .github/scripts/torch-ice-review-quality-replay.mjs --stdout
+
   review:
     # A workflow run can be created for any issue comment, but only a trusted
     # PR commenter can enter the job. Command recognition is done by the

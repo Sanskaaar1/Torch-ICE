@@ -144,7 +144,7 @@ async function main() {
   }
   const destination = path.join(os.tmpdir(), `torch-ice-review-quality-${Date.now()}.json`);
   await fs.writeFile(destination, JSON.stringify(output, null, 2));
-  process.stdout.write(`${destination}\n`);
+  process.stdout.write(process.argv.includes('--stdout') ? `${JSON.stringify(output)}\n` : `${destination}\n`);
   if (failure) throw failure;
 }
 

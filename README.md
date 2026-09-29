@@ -254,6 +254,9 @@ Review-quality fixtures can be checked locally with
 `OPENAI_API_KEY` configured, omit `--offline` to run local model replays of
 PR #9 and corrected/control fixtures. The runner writes results under the
 system temporary directory and never posts to GitHub.
+Repository owners can also run the `Review Agent` workflow manually to replay
+these fixtures with the Actions secret; the sanitized results appear in the
+workflow log without posting PR comments.
 
 Repository administrators must configure the `OPENAI_API_KEY` Actions secret.
 The workflow requires only `contents: read`, `pull-requests: write`, and
