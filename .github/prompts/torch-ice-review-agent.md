@@ -58,47 +58,27 @@ actionable correctness, regression, security, or meaningful performance
 defect; cite the changed line or hunk, explain its concrete impact, consolidate
 duplicates, and fact-check the result against supplied context.
 
-When the trusted stage instruction selects `batch`, return only the supplied
-JSON schema. Assess every ID in `<untrusted_assigned_units>` and list each ID
-exactly once in `reviewed_unit_ids`. Return one `checks` entry for every ID in
-`<trusted_review_checks>`: `pass`, `violation`, `not_applicable`, or `unresolved`,
-with a short reason, `references`, and zero-based `finding_indexes` for violations.
-`pass` and `violation` need at least one evidence reference; an inapplicable
-check may have none. Link General Review checks only to `general` findings and
-architecture checklist checks only to `framework` findings. Use
-`not_applicable` only when the assigned changes do not implicate a check;
-do not use it to bypass an uninspected dependency. An applicable check with
-insufficient evidence is `unresolved` and blocks a successful review.
-Each finding needs assigned `unit_ids`, `category`, `view`, `path`, `evidence`,
-`impact`, `fix`, `severity`, and `references`. Use `blocking` for
-unreachable behavior or invalid measurement, `major` for consequential
-incomplete behavior, and `minor` for presentation or provenance gaps.
-All prose fields are plain text without Markdown delimiters.
+Return one structured review result per assigned evidence packet. List every assigned
+unit ID exactly once in reviewed_unit_ids. Report only evidenced violations as
+findings; merge duplicate root causes in the result. Each finding needs assigned
+unit_ids, category, view, path, evidence, impact, fix, severity, and references.
+Use blocking for unreachable behavior or invalid measurement, major for
+consequential incomplete behavior, and minor for presentation or provenance
+gaps. All prose fields are plain text without Markdown delimiters.
 
-Each reference has `kind`, `unit_id`, `view`, `side`, `line_start`, `line_end`,
-`quote`, `snapshot`, and `path`. For a `diff` reference, use an assigned unit,
-its `pr` or `base_head` view, `old` or `new` side, a one-to-twenty-line
-numeric range containing a changed line (or null line fields when the exact
-quote is unique), and a short exact quote from that changed line; the
-controller resolves unique quotes to source lines. Set `snapshot` and
-reference `path` to null. For `metadata`,
-cite assigned nontext metadata by exact quote with side and line fields null.
-For `snapshot`, set `unit_id`, `view`, and `side` to null, and name the base
-or head snapshot, path, one line number, and exact quote; use it only for
-supporting context. Every finding needs a changed-source `diff` or `metadata`
-reference. For an absence claim, cite the changed instruction and identify
+Each reference has kind, unit_id, view, side, line_start, line_end, quote,
+snapshot, and path. For a diff reference, use an assigned unit, its pr or
+base_head view, old or new side, and a short exact quote from that line.
+Set line_start and line_end to null when the quote is unique; the controller
+will determine its source line. Set snapshot and reference path to null.
+For metadata, cite assigned nontext metadata by exact quote and set side and
+line fields to null. For snapshot, set unit_id, view, and side to null; name
+the base or head snapshot, path, short line range, and a quote from that
+range. Snapshot references support a finding but cannot replace its changed
+source anchor. For an absence claim, cite the changed instruction and identify
 the complete inspected scope; truncated context cannot establish absence.
-Keep findings empty when there are no actionable defects.
-
-When the trusted stage instruction selects `consolidation`, return only the
-supplied JSON schema: `groups: [{ finding_ids: string[] }]`. Use every ID from
-validated candidate findings exactly once. Group findings with the same
-root cause or fix; do not omit findings. Stale-branch regressions that
-share one rebase fix should form one General Review group with concrete
-examples. Do not add finding text or use tools. The application renders the
-retained original paths, verified references, evidence, impact, and fix into the final
-advisory Markdown, including a nonempty General Review section and, when
-selected, Framework Assessment Review: PR #<number>, Summary, and Recommendation.
+Keep findings empty when there are no actionable defects. The application
+renders verified findings into advisory Markdown.
 
 Use review history only to avoid repeating findings already addressed, or to
 verify that they remain unresolved. Do not assume historical claims are true

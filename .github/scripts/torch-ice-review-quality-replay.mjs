@@ -8,8 +8,8 @@ import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { packReviewBatches } from './torch-ice-review-evidence.mjs';
 import {
-  BATCH_RESULT_SCHEMA, CONSOLIDATION_SCHEMA, EXPLORATION_TOOLS, batchStageInstructions, buildReviewInput, consolidationStageInstructions, consolidateFindings, parseBatchResponse,
-  planReviewJobs, prepareReviewUnits, readFileContext, redactSensitiveText, requiredReviewChecks, reviewBatches,
+  BATCH_RESULT_SCHEMA, EXPLORATION_TOOLS, batchStageInstructions, buildReviewInput, parseBatchResponse,
+  prepareReviewUnits, readFileContext, redactSensitiveText, renderFindings, reviewBatches,
   reviewRequestTimeoutMs, runExplorationLoop, selectReviewMode, validateBatchResult, verifySnapshotReferences,
 } from './torch-ice-review-agent.mjs';
 
@@ -57,7 +57,9 @@ export async function prepareFixture(name, root) {
     const baseExists = await fs.stat(baseFile).then(() => true, () => false);
     const headExists = await fs.stat(headFile).then(() => true, () => false);
     const patch = await git(['diff', '--no-index', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--', baseExists ? baseFile : '/dev/null', headExists ? headFile : '/dev/null']);
-    if (patch) files.push({ filename: file, status: baseExists ? headExists ? 'modified' : 'removed' : 'added', patch });
+    if (patch) files.push({ filename: file, status: baseExists ? headExists ? 'modified' : 'removed' : 'added', patch,
+      additions: patch.split(/\r?\n/).filter((line) => line.startsWith('+') && !line.startsWith('+++')).length,
+      deletions: patch.split(/\r?\n/).filter((line) => line.startsWith('-') && !line.startsWith('---')).length });
   }
   const directEvidence = files.map((file) => ({ path: file.filename, status: file.status === 'added' ? 'A' : file.status === 'removed' ? 'D' : 'M', patch: file.patch }));
   const units = prepareReviewUnits({ githubFiles: files, rawDiff: files.map((file) => file.patch).join('\n'), directEvidence });
@@ -80,8 +82,7 @@ async function requestModel({ instructions, schema, name, input, deadline, usage
 
 export async function liveTrial(prepared, instructions, checklist, usage) {
   const { fixture, snapshots, files, units, reviewMode } = prepared;
-  const checks = requiredReviewChecks(checklist, reviewMode);
-  const batches = planReviewJobs(prepared.batches, units, checks, reviewMode);
+  const batches = prepared.batches;
   const evidenceById = new Map(units.map((unit) => [unit.id, unit.evidence]));
   for (const batch of batches) {
     batch.unitEvidence = Object.fromEntries(batch.ids.map((id) => [id, evidenceById.get(id)]));
@@ -92,12 +93,13 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
   const findings = await reviewBatches(batches, async (batch, attempt, retryReason) => {
     const paths = new Set(batch.units.map((unit) => unit.path));
     const batchFiles = files.filter((file) => paths.has(file.filename));
-    const contextFiles = batch.contextPaths ? batch.contextPaths.map((filename) => ({ filename })) : reviewMode === 'framework-assessment'
-      ? [{ filename: 'SKILL.md' }, ...batchFiles.filter((file) => file.filename !== 'SKILL.md')]
+    const assessmentFiles = batchFiles.filter((file) => /\/(?:EVAL|checklist)\.md$/.test(file.filename));
+    const contextFiles = reviewMode === 'framework-assessment'
+      ? [{ filename: 'SKILL.md' }, ...assessmentFiles, ...batchFiles.filter((file) => file.filename !== 'SKILL.md' && !assessmentFiles.includes(file))]
       : batchFiles;
-    const fileContext = await readFileContext(snapshots.head, contextFiles, { required: !!batch.focus });
+    const fileContext = await readFileContext(snapshots.head, contextFiles);
     const input = buildReviewInput({ pr: { number: 9, title: fixture.name }, headSha: fixture.head, files: batchFiles,
-      batchEvidence: batch.evidence, fileContext, history: [], checklist, checks: batch.checks, reviewMode, focus: batch.focus }).input;
+      batchEvidence: batch.evidence, fileContext, history: [], checklist, reviewMode }).input;
     let offset = 0;
     const manifest = batch.units.map((unit) => {
       const start = offset;
@@ -107,20 +109,15 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
       return result;
     });
     const requestInput = redactSensitiveText(`${input}\n\n<untrusted_assigned_units>\n${JSON.stringify(manifest).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}\n</untrusted_assigned_units>`).text;
-    const stage = batchStageInstructions(instructions, attempt, retryReason, batch.focus);
+    const stage = batchStageInstructions(instructions, attempt, retryReason);
     const exploration = await runExplorationLoop((turns, { toolChoice = 'auto' } = {}) => requestModel({ instructions: stage, schema: BATCH_RESULT_SCHEMA, name: 'review_batch', input: turns, deadline, usage,
       tools: EXPLORATION_TOOLS, toolChoice, maxOutputTokens: 8192 }), requestInput, snapshots, explorationBudget);
     const result = parseBatchResponse(exploration.response);
     validateBatchResult(result, batch);
-    await verifySnapshotReferences([...result.findings, ...result.checks], snapshots);
+    await verifySnapshotReferences(result.findings, snapshots);
     return result;
   }, deadline);
-  const markdown = await consolidateFindings({ findings, pr: { number: 9, title: fixture.name }, reviewMode, deadline,
-    requestConsolidation: async (data) => {
-      const response = await requestModel({ instructions: consolidationStageInstructions(instructions), schema: CONSOLIDATION_SCHEMA, usage,
-        name: 'review_consolidation', input: `<untrusted_consolidation_candidates>\n${redactSensitiveText(JSON.stringify(data)).text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}\n</untrusted_consolidation_candidates>`, deadline });
-      return parseBatchResponse(response);
-    } });
+  const markdown = renderFindings({ findings, pr: { number: 9, title: fixture.name }, reviewMode });
   return { name: fixture.name, latency_ms: Date.now() - started, findings: findings.length, markdown };
 }
 

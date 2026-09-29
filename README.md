@@ -230,10 +230,9 @@ assessment checklist plus General Review. All other PRs—including repo-wide
 renames, bug fixes, and improvements that touch existing assessment files—
 receive General Review.
 
-Every invocation retrieves its review memory fresh from the current PR in
-GitHub: metadata, files/diff, review and conversation comments, and trusted
-maintainer feedback. This compact, bounded history helps follow-up reviews
-avoid repeating resolved findings. No database, embeddings service, vector
+Every invocation retrieves the current PR metadata, files/diff, and comments
+from GitHub. Trusted maintainer feedback can inform follow-up reviews; earlier
+agent comments are excluded from detection inputs. No database, embeddings service, vector
 store, or persistent external memory is used. The agent reviews two comparison
 views: the GitHub PR diff and the current base directly against the PR head,
 including direct-only paths that can expose stale-branch regressions. Textual
@@ -243,17 +242,13 @@ packed into at most eight batches of up to 20,000 characters each, totaling
 at most 160,000 characters. An indivisible evidence unit exceeding the
 20,000-character limit fails the review. Each request uses fixed section
 budgets under a 256,000-character ceiling (about 64k tokens).
-When the PyTorch performance dimension is the only changed framework surface,
-two focused requests trace
-flag dispatch and assess measurement and execution rules against complete
-`SKILL.md` and performance `EVAL.md` context. Other checks stay in the normal
-batches; all requests share the same deadline and retry limits.
-Every unit and applicable checklist check must be accounted for before a final
-tools-disabled request groups every validated finding. Changed-line citations and
-supporting snapshot quotes are checked against pinned evidence. The application
-sorts findings by severity and renders an advisory Markdown review from those
-original findings. Missing evidence, exceeded limits, invalid results, or
-failed consolidation produce a failure comment without partial findings.
+PRs whose evidence fits in one packet need one model review response. Larger
+diffs use bounded sequential packets with the same deadline and retry limits.
+Each packet accounts for its assigned evidence units. Changed-line citations
+and supporting snapshot quotes are checked against pinned evidence. The
+application removes exact duplicates, sorts findings by severity, and renders
+the advisory Markdown. Missing evidence, exceeded limits, or invalid results
+produce a failure comment without partial findings.
 The base and head SHAs are checked again immediately before posting success.
 
 Review-quality fixtures can be checked locally with
@@ -266,46 +261,14 @@ Repository administrators must configure the `OPENAI_API_KEY` Actions secret.
 The workflow requires only `contents: read`, `pull-requests: write`, and
 `issues: write`; the write scopes are used for the acknowledgement reaction and
 normal PR conversation comments. OpenAI requests allow 180 seconds and start
-with 8,192 output tokens. Each batch gets at most one 8,192-token retry after
-a failed request or validation; consolidation gets one request. All model work
+with 8,192 output tokens. Each packet gets at most one 8,192-token retry after
+a failed request or validation. All model work
 shares a 14-minute deadline. PRs labelled `security`, `private`, or
 `do-not-ai-review` are not sent to OpenAI. Repository administrators should
 protect `main` and require designated review for workflow, prompt, and review
 agent script changes.
 
-## Repository Structure
-
-```
-torch-ice/
-├── SKILL.md                          # Orchestrator: input parsing, dispatch, scoring, summary
-├── skills/
-│   └── torch-integration-capability-evaluation/
-│       └── SKILL.md                  # Symlink to ../../SKILL.md (plugin discovery)
-├── .claude/
-│   └── skills/
-│       └── torch-ice-review/
-│           ├── SKILL.md              # Reviews Torch-ICE PRs against checklist.md
-│           ├── checklist.md          # Canonical architecture review checklist
-│           └── README.md             # Usage docs for the architecture review skill
-├── .github/
-│   ├── prompts/
-│   │   ├── torch-ice-review-agent.md # Review Agent behavior and output format
-│   │   └── architecture-review-checklist.md # Symlink to the canonical checklist
-│   ├── scripts/
-│   │   └── torch-ice-review-agent.mjs # GitHub/Responses API integration
-│   └── workflows/
-│       └── torch-ice-review-agent.yml # Maintainer-invoked PR workflow
-├── frameworks/
-│   └── pytorch/
-│       ├── EVAL.md                   # PyTorch evaluation phases and probing instructions
-│       ├── checklist.md              # PyTorch readiness checklist template (open-source)
-│       └── performance/              # Optional performance assessment
-│           ├── EVAL.md
-│           └── checklist.md
-├── crcr/
-│   └── crcr-l1-onboarding.md        # CRCR Level 1 onboarding guide
-└── README.md
-```
+## Extending Torch-ICE
 
 Adding a new framework: create `frameworks/<name>/` with `EVAL.md` (probing instructions) and `checklist.md` (fillable template), then add the framework to the dispatch table in `SKILL.md`.
 
