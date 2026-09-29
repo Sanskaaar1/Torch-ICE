@@ -115,12 +115,7 @@ export function validateQuality(result, batch) {
     if (!expected.includes(check.id) || !['pass', 'violation', 'not_applicable', 'unresolved'].includes(check.status) || check.status === 'unresolved' || typeof check.reason !== 'string' || !check.reason.trim() || !Array.isArray(check.finding_indexes) || new Set(check.finding_indexes).size !== check.finding_indexes.length || !Array.isArray(check.references)) incomplete('check disposition');
     if (check.finding_indexes.some((index) => !Number.isSafeInteger(index) || index < 0 || index >= result.findings.length)) incomplete('check finding index');
     if (check.status === 'violation' ? !check.finding_indexes.length : check.finding_indexes.length) incomplete('check finding links');
-    if (check.finding_indexes.some((index) => result.findings[index].category !== (check.id.startsWith('general-') ? 'general' : 'framework'))) incomplete('check finding category');
     if (check.status !== 'not_applicable' && !check.references.length) incomplete('check references');
-    for (const ref of check.references) {
-      const unit = batch.units.find((entry) => entry.id === ref.unit_id);
-      validateReference(ref, { path: unit?.path, view: ref.view }, batch);
-    }
   }
   if (result.findings.some((_, index) => !result.checks.some((check) => check.finding_indexes.includes(index)))) incomplete('unlinked finding');
   for (const finding of result.findings) {

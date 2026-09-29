@@ -431,6 +431,15 @@ test('uniquely quoted diff lines correct stale model line numbers', () => {
   assert.throws(() => agent.validateReference({ ...ref, quote: 'missing' }, { path: unit.path, view: 'pr', unit_ids: ['u1'] }, { units: [unit] }), /diff reference quote absent/);
 });
 
+test('cross-section checks link findings while only posted citations are verified', () => {
+  const unit = { id: 'u1', path: 'src/a.js', views: ['pr'], evidence: 'Path: src/a.js\nPR diff (modified)\n@@ -1 +1 @@\n-old\n+new' };
+  const anchor = { kind: 'diff', unit_id: 'u1', view: 'pr', side: 'new', line_start: 1, line_end: 1, quote: 'new', snapshot: null, path: null };
+  const finding = { ...batchFinding, category: 'framework', severity: 'major', references: [anchor] };
+  const batch = { ids: ['u1'], units: [unit], checks: [{ id: 'general-correctness' }] };
+  const result = { reviewed_unit_ids: ['u1'], checks: [{ id: 'general-correctness', status: 'violation', reason: 'cross-cutting regression', references: [{ ...anchor, quote: 'not used in report' }], finding_indexes: [0] }], findings: [finding] };
+  assert.deepEqual(agent.validateBatchResult(result, batch), [finding]);
+});
+
 test('snapshot references must match complete trusted file lines', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-citation-'));
   const head = path.join(root, 'head');
