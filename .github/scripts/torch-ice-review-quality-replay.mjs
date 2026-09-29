@@ -112,7 +112,7 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
       await verifySnapshotReferences(result.findings, snapshots);
       return result;
     } catch (error) {
-      if (attempt === 0 && result && String(error.message).startsWith('Review evidence incomplete:')) error.reviewDraft = result;
+      if (result && String(error.message).startsWith('Review evidence incomplete:')) error.reviewDraft = result;
       throw error;
     }
   }, deadline);
@@ -126,7 +126,12 @@ async function main() {
   const instructions = await fs.readFile(path.join(ROOT, '.github/prompts/torch-ice-review-agent.md'), 'utf8');
   const checklist = await fs.readFile(path.join(ROOT, '.claude/skills/torch-ice-review/checklist.md'), 'utf8');
   const output = { model: MODEL, prompt_sha256: createHash('sha256').update(instructions).digest('hex'), baseline: 'PR #9 posted comment 5888856543', trials: [] };
-  let failure = null;
+  let failures = 0;
+  const rejectedShape = (error) => error.reviewDraft?.findings?.map((finding) => ({
+    path: finding.path, view: finding.view, unit_ids: finding.unit_ids,
+    references: finding.references?.map((ref) => ({ kind: ref.kind, unit_id: ref.unit_id, view: ref.view, side: ref.side,
+      snapshot: ref.snapshot, path: ref.path, line_start: ref.line_start, line_end: ref.line_end })),
+  }));
   for (const name of FIXTURES) {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), `torch-ice-replay-${name}-`));
     try {
@@ -134,18 +139,18 @@ async function main() {
       if (offline) output.trials.push({ name, files: prepared.files.length, units: prepared.units.length, batches: prepared.batches.length, reviewMode: prepared.reviewMode });
       else for (let index = 0; index < (name === 'general' ? 1 : 3); index++) {
         const usage = [];
-        output.trials.push({ ...await liveTrial(prepared, instructions, checklist, usage), usage });
+        try { output.trials.push({ ...await liveTrial(prepared, instructions, checklist, usage), index, usage }); }
+        catch (error) { failures++; output.trials.push({ name, index, error: error.message, rejectedShape: rejectedShape(error), usage }); }
       }
     } catch (error) {
-      failure = error;
+      failures++;
       output.trials.push({ name, error: error.message });
     } finally { await fs.rm(root, { recursive: true, force: true }); }
-    if (failure) break;
   }
   const destination = path.join(os.tmpdir(), `torch-ice-review-quality-${Date.now()}.json`);
   await fs.writeFile(destination, JSON.stringify(output, null, 2));
-  process.stdout.write(process.argv.includes('--stdout') ? `${JSON.stringify(output)}\n` : `${destination}\n`);
-  if (failure) throw failure;
+  process.stdout.write(process.argv.includes('--stdout') ? `${redactSensitiveText(JSON.stringify(output)).text}\n` : `${destination}\n`);
+  if (failures) throw new Error(`${failures} replay trial(s) failed.`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch((error) => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });
