@@ -387,6 +387,9 @@ test('snapshot references must match complete trusted file lines', async () => {
     await fs.writeFile(path.join(head, 'SKILL.md'), 'first\n--performance also produces a report\n');
     const ref = { kind: 'snapshot', unit_id: null, view: null, side: null, line_start: 2, line_end: 2, quote: 'also produces', snapshot: 'head', path: 'SKILL.md' };
     await assert.doesNotReject(agent.verifySnapshotReferences([{ references: [ref] }], { base: head, head }));
+    const multiline = { ...ref, line_start: 1, quote: 'first\n--performance also produces a report' };
+    assert.doesNotThrow(() => agent.validateReference(multiline, {}, { units: [] }));
+    await assert.doesNotReject(agent.verifySnapshotReferences([{ references: [multiline] }], { base: head, head }));
     await assert.rejects(agent.verifySnapshotReferences([{ references: [{ ...ref, line_start: 3, line_end: 3 }] }], { base: head, head }), /Review evidence incomplete/);
     await assert.rejects(agent.verifySnapshotReferences([{ references: [{ ...ref, path: '../outside' }] }], { base: head, head }), /Review evidence incomplete/);
   } finally { await fs.rm(root, { recursive: true, force: true }); }

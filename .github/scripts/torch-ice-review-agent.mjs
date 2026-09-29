@@ -58,7 +58,7 @@ function changedLines(evidence, view, side) {
 }
 
 export function validateReference(ref, finding, batch) {
-  if (!ref || !['diff', 'metadata', 'snapshot'].includes(ref.kind) || typeof ref.quote !== 'string' || !ref.quote.trim() || ref.quote.includes('\n')) incomplete('reference shape');
+  if (!ref || !['diff', 'metadata', 'snapshot'].includes(ref.kind) || typeof ref.quote !== 'string' || !ref.quote.trim() || (ref.kind !== 'snapshot' && /[\r\n]/.test(ref.quote))) incomplete('reference shape');
   if (ref.kind === 'snapshot') {
     if (!['base', 'head'].includes(ref.snapshot) || typeof ref.path !== 'string' || !Number.isSafeInteger(ref.line_start) || !Number.isSafeInteger(ref.line_end) || ref.line_start < 1 || ref.line_end < ref.line_start || ref.line_end - ref.line_start > 19) incomplete('snapshot reference range');
     if (ref.unit_id !== null || ref.view !== null || ref.side !== null) incomplete('snapshot reference provenance');
