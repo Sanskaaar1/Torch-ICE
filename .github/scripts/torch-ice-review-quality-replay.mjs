@@ -89,7 +89,7 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
   const deadline = Date.now() + 14 * 60_000;
   const started = Date.now();
   const explorationBudget = { calls: 0, characters: 0 };
-  const findings = await reviewBatches(batches, async (batch, attempt) => {
+  const findings = await reviewBatches(batches, async (batch, attempt, retryReason) => {
     const paths = new Set(batch.units.map((unit) => unit.path));
     const batchFiles = files.filter((file) => paths.has(file.filename));
     const fileContext = await readFileContext(snapshots.head, reviewMode === 'framework-assessment'
@@ -106,9 +106,9 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
       return result;
     });
     const requestInput = redactSensitiveText(`${input}\n\n<untrusted_assigned_units>\n${JSON.stringify(manifest).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}\n</untrusted_assigned_units>`).text;
-    const stage = batchStageInstructions(instructions, attempt);
+    const stage = batchStageInstructions(instructions, attempt, retryReason);
     const exploration = await runExplorationLoop((turns, { toolChoice = 'auto' } = {}) => requestModel({ instructions: stage, schema: BATCH_RESULT_SCHEMA, name: 'review_batch', input: turns, deadline, usage,
-      tools: EXPLORATION_TOOLS, toolChoice, maxOutputTokens: attempt ? 8192 : 6144 }), requestInput, snapshots, explorationBudget);
+      tools: EXPLORATION_TOOLS, toolChoice, maxOutputTokens: 8192 }), requestInput, snapshots, explorationBudget);
     const result = parseBatchResponse(exploration.response);
     validateBatchResult(result, batch);
     await verifySnapshotReferences([...result.findings, ...result.checks], snapshots);

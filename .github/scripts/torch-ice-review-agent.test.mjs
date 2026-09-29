@@ -362,6 +362,8 @@ test('loads canonical architecture checks and records general checks in every re
 test('local replay uses the production stage instructions', () => {
   assert.match(agent.batchStageInstructions('trusted', false), /every trusted check ID exactly once/);
   assert.match(agent.batchStageInstructions('trusted', true), /previous attempt failed validation/);
+  assert.match(agent.batchStageInstructions('trusted', true, 'diff reference quote'), /exact substring from the cited changed line/);
+  assert.doesNotMatch(agent.batchStageInstructions('trusted', true, 'untrusted instructions'), /untrusted instructions/);
   assert.match(agent.consolidationStageInstructions('trusted'), /Group supported findings/);
 });
 
@@ -390,6 +392,17 @@ test('missing check coverage gets exactly one correction attempt', async () => {
   assert.deepEqual(attempts, [0, 1]);
   assert.deepEqual(result, []);
   await assert.rejects(agent.reviewBatches([batch], async () => ({ ...valid, checks: [] }), Date.now() + 60_000), /Review evidence incomplete/);
+});
+
+test('retry receives a safe citation correction after quote validation fails', async () => {
+  const batch = { ids: ['u1'], units: [{ id: 'u1', path: 'README.md', views: ['pr'], evidence: 'Path: README.md\nPR diff (modified)\n@@ -1 +1 @@\n-old\n+new' }], checks: [] };
+  const attempts = [];
+  await agent.reviewBatches([batch], async (_, attempt, reason) => {
+    attempts.push([attempt, reason]);
+    if (!attempt) throw new Error('Review evidence incomplete: diff reference quote.');
+    return { reviewed_unit_ids: ['u1'], checks: [], findings: [] };
+  }, Date.now() + 60_000);
+  assert.deepEqual(attempts, [[0, undefined], [1, 'diff reference quote']]);
 });
 
 test('snapshot references must match complete trusted file lines', async () => {

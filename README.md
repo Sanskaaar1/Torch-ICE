@@ -261,7 +261,7 @@ Repository administrators must configure the `OPENAI_API_KEY` Actions secret.
 The workflow requires only `contents: read`, `pull-requests: write`, and
 `issues: write`; the write scopes are used for the acknowledgement reaction and
 normal PR conversation comments. OpenAI requests allow 180 seconds and start
-with 6,144 output tokens. Each batch gets at most one 8,192-token retry after
+with 8,192 output tokens. Each batch gets at most one 8,192-token retry after
 a failed request or validation; consolidation gets one request. All model work
 shares a 14-minute deadline. PRs labelled `security`, `private`, or
 `do-not-ai-review` are not sent to OpenAI. Repository administrators should

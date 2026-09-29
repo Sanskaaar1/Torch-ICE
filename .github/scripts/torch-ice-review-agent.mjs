@@ -27,7 +27,7 @@ const REVIEW_DEADLINE_MS = 14 * 60 * 1_000;
 // Responses has no input-token limit parameter. This ceiling targets roughly
 // 64k input tokens while giving the current diff its own non-competing budget.
 const INPUT_MAX_CHARS = 256_000;
-const INITIAL_MAX_OUTPUT_TOKENS = 6_144;
+const INITIAL_MAX_OUTPUT_TOKENS = 8_192;
 const RETRY_MAX_OUTPUT_TOKENS = 8_192;
 const FORCE_COOLDOWN_MS = 15 * 60 * 1_000;
 const FORCE_MAX_PER_HEAD = 2;
@@ -108,8 +108,8 @@ export function parseBatchResponse(response) {
   catch { throw new Error('Review evidence incomplete: invalid batch JSON.'); }
 }
 
-export function batchStageInstructions(instructions, attempt) {
-  return `${instructions}\n\nTrusted stage: batch. Return only review_batch JSON. Review every assigned unit ID and every trusted check ID exactly once; use not_applicable for checks unrelated to assigned changes. A violation must link to finding indexes; every finding needs a changed-source diff or metadata anchor. Verify flag, checklist, EVAL, and output routing through related snapshot files before judging dispatch. The manifest identifies each unit's offsets in the escaped diff. Use plain text in finding fields, no Markdown. Do not write final Markdown sections.${attempt ? ' The previous attempt failed validation; return a complete valid batch result.' : ''}`;
+export function batchStageInstructions(instructions, attempt, retryReason) {
+  return `${instructions}\n\nTrusted stage: batch. Return only review_batch JSON. Review every assigned unit ID and every trusted check ID exactly once; use not_applicable for checks unrelated to assigned changes. A violation must link to finding indexes; every finding needs a changed-source diff or metadata anchor. Verify flag, checklist, EVAL, and output routing through related snapshot files before judging dispatch. The manifest identifies each unit's offsets in the escaped diff. For each diff reference, quote an exact substring from the cited changed line, without the diff marker. Use plain text in finding fields, no Markdown. Do not write final Markdown sections.${attempt ? ` The previous attempt failed validation; return a complete valid batch result.${retryReason === 'diff reference quote' ? ' A diff reference quote was invalid: copy an exact substring from the cited changed line and correct its side and line range.' : ''}` : ''}`;
 }
 
 export function consolidationStageInstructions(instructions) {
@@ -119,14 +119,18 @@ export function consolidationStageInstructions(instructions) {
 export async function reviewBatches(batches, requestBatch, deadline) {
   const findings = [];
   for (const batch of batches) {
+    let retryReason;
     for (let attempt = 0; attempt < 2; attempt++) {
       if (Date.now() >= deadline) throw new Error('Review evidence incomplete: deadline.');
       try {
-        const result = await requestBatch(batch, attempt);
+        const result = await requestBatch(batch, attempt, retryReason);
         if (Date.now() >= deadline) throw new Error('Review evidence incomplete: deadline.');
         findings.push(...validateBatchResult(result, batch));
         break;
-      } catch (error) { if (attempt === 1) throw error; }
+      } catch (error) {
+        if (attempt === 1) throw error;
+        retryReason = String(error.message).includes('Review evidence incomplete: diff reference quote.') ? 'diff reference quote' : undefined;
+      }
     }
   }
   return findings;
@@ -756,7 +760,7 @@ async function main() {
     }
     // All attempts and batches share the original aggregate exploration limits.
     const explorationBudget = { calls: 0, characters: 0 };
-    const findings = await reviewBatches(batches, async (batch, attempt) => {
+    const findings = await reviewBatches(batches, async (batch, attempt, retryReason) => {
       const paths = new Set(batch.units.map((unit) => unit.path));
       const batchFiles = normalizedFiles.filter((file) => paths.has(file.filename));
       const contextFiles = reviewMode === 'framework-assessment'
@@ -775,7 +779,7 @@ async function main() {
       })));
       const input = redactSensitiveText(`${reviewInput.input}\n\n<untrusted_assigned_units>\n${manifest}\n</untrusted_assigned_units>`).text;
       if (input.length > INPUT_MAX_CHARS) throw new Error('Review input exceeded its fixed section budgets.');
-      const batchInstructions = batchStageInstructions(instructions, attempt);
+      const batchInstructions = batchStageInstructions(instructions, attempt, retryReason);
       const exploration = await runExplorationLoop(async (requestInput, { toolChoice = 'auto' } = {}) => {
         let response;
         try {
