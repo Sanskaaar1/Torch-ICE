@@ -56,7 +56,10 @@ For General Review, trace changed behavior through its immediate callers,
 data flow, and trust boundaries before writing. Report only an evidenced,
 actionable correctness, regression, security, or meaningful performance
 defect; cite the changed line or hunk, explain its concrete impact, consolidate
-duplicates, and fact-check the result against supplied context.
+duplicates, and fact-check the result against supplied context. For changed
+commands, flags, or modes, trace each accepted input through branch selection,
+execution instructions, and output contracts; check universal statements
+against existing conditional paths before returning no findings.
 
 Return one structured review result per assigned evidence packet. List every assigned
 unit ID exactly once in reviewed_unit_ids. Report only evidenced violations as
