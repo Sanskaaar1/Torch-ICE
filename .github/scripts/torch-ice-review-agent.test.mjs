@@ -390,7 +390,12 @@ test('snapshot references must match complete trusted file lines', async () => {
     const multiline = { ...ref, line_start: 1, quote: 'first\n--performance also produces a report' };
     assert.doesNotThrow(() => agent.validateReference(multiline, {}, { units: [] }));
     await assert.doesNotReject(agent.verifySnapshotReferences([{ references: [multiline] }], { base: head, head }));
-    await assert.rejects(agent.verifySnapshotReferences([{ references: [{ ...ref, line_start: 3, line_end: 3 }] }], { base: head, head }), /Review evidence incomplete/);
+    const staleLine = { ...ref, line_start: 3, line_end: 3 };
+    await assert.doesNotReject(agent.verifySnapshotReferences([{ references: [staleLine] }], { base: head, head }));
+    assert.deepEqual([staleLine.line_start, staleLine.line_end], [2, 2]);
+    await assert.rejects(agent.verifySnapshotReferences([{ references: [{ ...ref, quote: 'unwritten rule' }] }], { base: head, head }), /Review evidence incomplete/);
+    await fs.appendFile(path.join(head, 'SKILL.md'), '--performance also produces a report\n');
+    await assert.rejects(agent.verifySnapshotReferences([{ references: [{ ...ref, line_start: 4, line_end: 4 }] }], { base: head, head }), /Review evidence incomplete/);
     await assert.rejects(agent.verifySnapshotReferences([{ references: [{ ...ref, path: '../outside' }] }], { base: head, head }), /Review evidence incomplete/);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
@@ -403,6 +408,16 @@ test('snapshot citations accept the escaped text shown to the model and lines be
     await fs.writeFile(path.join(head, 'SKILL.md'), `${'padding\n'.repeat(1800)}<backend> is required\n`);
     const ref = { kind: 'snapshot', unit_id: null, view: null, side: null, line_start: 1801, line_end: 1801, quote: '&lt;backend&gt; is required', snapshot: 'head', path: 'SKILL.md' };
     await assert.doesNotReject(agent.verifySnapshotReferences([{ references: [ref] }], { base: head, head }));
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('snapshot line repair does not infer uniqueness from a truncated file', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-truncated-citation-'));
+  try {
+    await fs.writeFile(path.join(root, 'large.md'), `unique\n${'x'.repeat(1_000_000)}`);
+    const ref = { kind: 'snapshot', unit_id: null, view: null, side: null, line_start: 2, line_end: 2, quote: 'unique', snapshot: 'head', path: 'large.md' };
+    await assert.rejects(agent.verifySnapshotReferences([{ references: [ref] }], { base: root, head: root }), /Review evidence incomplete/);
+    await assert.doesNotReject(agent.verifySnapshotReferences([{ references: [{ ...ref, line_start: 1, line_end: 1 }] }], { base: root, head: root }));
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 

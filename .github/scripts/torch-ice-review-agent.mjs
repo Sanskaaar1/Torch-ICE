@@ -546,10 +546,24 @@ export async function verifySnapshotReferences(findings, snapshots) {
     if (ref.kind !== 'snapshot') continue;
     try {
       const { root, resolved } = await snapshotPath(snapshots, ref.snapshot, ref.path);
-      const { content } = await readSnapshotFile(resolved, 1_000_000);
+      const { content, truncated } = await readSnapshotFile(resolved, 1_000_000);
       const lines = content.split(/\r?\n/);
-      if (path.relative(root, resolved) === ref.path && ref.line_end <= lines.length &&
+      if (path.relative(root, resolved) !== ref.path) throw new Error('Snapshot path changed.');
+      if (ref.line_end <= lines.length &&
           quoted(lines.slice(ref.line_start - 1, ref.line_end).join('\n'), ref.quote)) continue;
+      if (truncated) throw new Error('Snapshot was truncated.');
+      const fullText = lines.join('\n');
+      for (const source of [fullText, escapeUntrustedSection(fullText)]) {
+        const index = source.indexOf(ref.quote);
+        if (index < 0 || source.indexOf(ref.quote, index + 1) >= 0) continue;
+        const start = 1 + (source.slice(0, index).match(/\n/g)?.length ?? 0);
+        const end = start + (ref.quote.match(/\n/g)?.length ?? 0);
+        if (end - start > 19 || !quoted(lines.slice(start - 1, end).join('\n'), ref.quote)) continue;
+        ref.line_start = start;
+        ref.line_end = end;
+        break;
+      }
+      if (ref.line_end <= lines.length && quoted(lines.slice(ref.line_start - 1, ref.line_end).join('\n'), ref.quote)) continue;
     } catch { /* An invalid path or unreadable file is an invalid reference. */ }
     throw new Error('Review evidence incomplete: invalid snapshot reference.');
   }
