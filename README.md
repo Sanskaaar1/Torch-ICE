@@ -239,12 +239,12 @@ including direct-only paths that can expose stale-branch regressions. Textual
 evidence includes lockfiles, vendor code, build logic, generated artifacts,
 and SVGs; binary-change metadata is retained. Complete evidence units of at
 most 20,000 characters are sent together in one review packet, with a
-160,000-character total evidence limit. An indivisible unit exceeding its limit
-fails the review. The request has a 256,000-character ceiling (about 64k
-tokens) and one second attempt for a rejected or empty review. The response
-accounts for every evidence unit. Changed-line citations
-and supporting snapshot quotes are checked against pinned evidence. The
-application removes exact duplicates, sorts findings by severity, and renders
+400,000-character total evidence limit. An indivisible unit exceeding its limit
+fails the review. The request has a 512,000-character ceiling and one second
+attempt for a rejected or empty review. The response accounts for every
+evidence unit. Changed-line citations and supporting snapshot quotes are
+checked against pinned evidence. The application removes exact duplicates,
+sorts findings by severity, and renders
 the advisory Markdown. Missing evidence, exceeded limits, or invalid results
 produce a failure comment without partial findings.
 The base and head SHAs are checked again immediately before posting success.

@@ -615,11 +615,11 @@ test('complete batch evidence is never truncated or escaped twice', () => {
   const result = buildReviewInput({ pr: { number: 1 }, files: [], history: [], batchEvidence });
   assert.ok(result.input.includes(batchEvidence));
   assert.equal(result.truncated, false);
-  assert.throws(() => buildReviewInput({ pr: { number: 1 }, files: [], history: [], batchEvidence: 'x'.repeat(256_000) }), /fixed section budgets/);
+  assert.throws(() => buildReviewInput({ pr: { number: 1 }, files: [], history: [], batchEvidence: 'x'.repeat(512_000) }), /fixed section budgets/);
 });
 
 test('a full review packet keeps diff evidence when optional history fills the input budget', () => {
-  const evidence = 'D'.repeat(160_000);
+  const evidence = 'D'.repeat(400_000);
   const result = buildReviewInput({
     pr: { number: 1, title: 'T'.repeat(2_000), body: 'B'.repeat(8_000) },
     files: Array.from({ length: 100 }, (_, index) => ({ filename: `${index}-${'p'.repeat(200)}.txt`, additions: 1, deletions: 0 })),
@@ -627,7 +627,7 @@ test('a full review packet keeps diff evidence when optional history fills the i
     batchEvidence: evidence, checklist: 'K'.repeat(20_000), reviewMode: 'framework-assessment', reservedChars: 10_000,
   });
   assert.ok(result.input.includes(evidence));
-  assert.ok(result.input.length <= 246_000);
+  assert.ok(result.input.length <= 502_000);
   assert.equal(result.truncated, true);
 });
 

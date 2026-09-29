@@ -23,9 +23,9 @@ const OPENAI_REQUEST_TIMEOUT_MS = 180_000;
 // Finish model work before the 20-minute workflow timeout so failure handling
 // can still post its advisory comment.
 const REVIEW_DEADLINE_MS = 14 * 60 * 1_000;
-// Responses has no input-token limit parameter. This ceiling targets roughly
-// 64k input tokens while giving the current diff its own non-competing budget.
-const INPUT_MAX_CHARS = 256_000;
+// Responses has no input-token limit parameter. Keep the complete diff and
+// bounded optional context below this character ceiling.
+const INPUT_MAX_CHARS = 512_000;
 const INITIAL_MAX_OUTPUT_TOKENS = 8_192;
 const RETRY_MAX_OUTPUT_TOKENS = 8_192;
 const FORCE_COOLDOWN_MS = 15 * 60 * 1_000;

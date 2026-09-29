@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const DIFF_ARGS = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames'];
-const git = (cwd, args, env) => execFileAsync('git', args, { cwd, env, maxBuffer: 200_000, encoding: 'buffer' });
+const git = (cwd, args, env) => execFileAsync('git', args, { cwd, env, maxBuffer: 512_000, encoding: 'buffer' });
 
 export async function collectDirectEvidence({ baseRoot, headRoot, baseSha, headSha }) {
   if (![baseSha, headSha].every((sha) => /^[a-f0-9]{40,64}$/i.test(sha))) {
@@ -34,7 +34,7 @@ export async function collectDirectEvidence({ baseRoot, headRoot, baseSha, headS
     }
     return evidence;
   } catch {
-    throw new Error('Current-base review evidence unavailable: Git failed or exceeded the 200,000-byte capture limit.');
+    throw new Error('Current-base review evidence unavailable: Git failed or exceeded the 512,000-byte capture limit.');
   }
 }
 
@@ -184,6 +184,6 @@ export function packReviewBatches(units) {
     batch.units.push({ id: unit.id, path: unit.path, views: unit.views });
     batch.evidence += `${batch.evidence ? '\n\n' : ''}Unit ${unit.id}\n${unit.evidence}`;
   }
-  if (batch.evidence.length > 160_000) throw incomplete('evidence limit');
+  if (batch.evidence.length > 400_000) throw incomplete('evidence limit');
   return [batch];
 }
