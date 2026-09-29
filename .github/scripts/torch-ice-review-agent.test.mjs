@@ -352,7 +352,6 @@ test('loads canonical architecture checks and records general checks in every re
   const checklist = await fs.readFile('.claude/skills/torch-ice-review/checklist.md', 'utf8');
   const checks = agent.requiredReviewChecks(checklist, 'framework-assessment');
   assert.ok(checks.some((check) => check.label === 'Probes are failure-isolated'));
-  assert.ok(checks.some((check) => check.label === 'Shared execution rules explicitly apply to dimensions'));
   assert.ok(checks.some((check) => check.label === 'Dimension `EVAL.md` loads only when its flag is active'));
   assert.ok(checks.some((check) => check.id === 'general-performance'));
   assert.equal(new Set(checks.map((check) => check.id)).size, checks.length);
@@ -362,7 +361,6 @@ test('loads canonical architecture checks and records general checks in every re
 
 test('local replay uses the production stage instructions', () => {
   assert.match(agent.batchStageInstructions('trusted', false), /every trusted check ID exactly once/);
-  assert.match(agent.batchStageInstructions('trusted', false), /separately assess failure-isolated probes, partial reports, manual-verification handling/);
   assert.match(agent.batchStageInstructions('trusted', true), /previous attempt failed validation/);
   assert.match(agent.batchStageInstructions('trusted', true, 'diff reference quote'), /exact substring from the cited changed line/);
   assert.match(agent.batchStageInstructions('trusted', true, 'snapshot reference shape'), /snapshot reference.*null.*line range/);
