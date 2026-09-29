@@ -183,6 +183,9 @@ export async function reviewBatches(batches, requestBatch, deadline) {
         validateBatchResult(result, batch);
         if (retryDraft?.findings?.length && result.findings.length < retryDraft.findings.length) incomplete('retry dropped prior findings');
         if (attempt === 0 && !result.findings.length) { retryReason = 'empty result'; continue; }
+        for (const finding of result.findings) for (const ref of finding.references) {
+          if (ref.kind !== 'snapshot') ref.source_path = batch.units.find((unit) => unit.id === ref.unit_id).path;
+        }
         findings.push(...result.findings);
         break;
       } catch (error) {
@@ -213,7 +216,7 @@ export function renderFindings({ findings, pr, reviewMode }) {
   const code = (value) => `\`${unescapeContext(value).replace(/`/g, '').replace(/\s+/g, ' ')}\``;
   const render = (selected) => selected.map((finding, index) => {
     const refs = finding.references.map((ref) => ref.kind === 'snapshot' ? `${ref.snapshot} ${code(ref.path)} ${ref.line_end === ref.line_start ? `line ${ref.line_start}` : `lines ${ref.line_start}-${ref.line_end}`}: ${code(ref.quote)}`
-      : `${ref.view === 'base_head' ? 'current base to head' : 'PR diff'} ${ref.kind === 'metadata' ? 'metadata' : `lines ${ref.line_start}${ref.line_end === ref.line_start ? '' : `-${ref.line_end}`} (${ref.side})`}: ${code(ref.quote)}`).join('; ');
+      : `${ref.source_path && ref.source_path !== finding.path ? `${code(ref.source_path)} ` : ''}${ref.view === 'base_head' ? 'current base to head' : 'PR diff'} ${ref.kind === 'metadata' ? 'metadata' : `lines ${ref.line_start}${ref.line_end === ref.line_start ? '' : `-${ref.line_end}`} (${ref.side})`}: ${code(ref.quote)}`).join('; ');
     return `### Finding ${index + 1} (${finding.severity})\n\n${inline(finding.impact)}\n\n- ${code(finding.path)} (${refs}): ${inline(finding.evidence)}\n\nSuggested fix: ${inline(finding.fix)}`;
   }).join('\n\n');
   const general = unique.filter((finding) => finding.category === 'general');

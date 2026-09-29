@@ -582,7 +582,7 @@ test('batch validation requires exact ID accounting and matching finding provena
   }
 });
 
-test('findings may cite changed supporting files while retaining a primary changed anchor', () => {
+test('findings may cite changed supporting files while retaining a primary changed anchor', async () => {
   const related = { id: 'u2', path: 'src/b.js', views: ['pr'], evidence: 'Path: src/b.js\nPR diff (modified)\n@@ -1 +1 @@\n-old helper\n+new helper' };
   const batch = { ids: ['u1', 'u2'], units: [batchU1.units[0], related] };
   const support = { ...batchFinding.references[0], unit_id: 'u2', quote: 'new helper' };
@@ -590,6 +590,9 @@ test('findings may cite changed supporting files while retaining a primary chang
   assert.deepEqual(agent.validateBatchResult({ reviewed_unit_ids: batch.ids, findings: [finding] }, batch), [finding]);
   assert.throws(() => agent.validateBatchResult({ reviewed_unit_ids: batch.ids, findings: [{ ...finding, references: [support] }] }, batch), /finding changed anchor/);
   assert.throws(() => agent.validateBatchResult({ reviewed_unit_ids: batch.ids, findings: [{ ...finding, references: [batchFinding.references[0], { ...support, quote: 'missing' }] }] }, batch), /diff reference quote absent/);
+  const reviewed = await agent.reviewBatches([batch], async () => ({ reviewed_unit_ids: batch.ids, findings: [finding] }), Date.now() + 60_000);
+  const output = agent.renderFindings({ findings: reviewed, pr: { number: 1 }, reviewMode: 'general' });
+  assert.match(output, /`src\/b\.js` PR diff lines 1 \(new\)/);
 });
 
 test('batch review retries once, runs sequentially, and enforces the shared deadline', async () => {

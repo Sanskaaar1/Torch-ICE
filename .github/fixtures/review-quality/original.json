@@ -4,5 +4,5 @@
   "head": "134115efd4be8377a933b94894d4616907e3f5df",
   "files": ["README.md", "SKILL.md", "frameworks/pytorch/performance/EVAL.md", "frameworks/pytorch/performance/checklist.md"],
   "edits": [],
-  "expected": ["dispatch", "p95-sample", "accelerator-timing", "failure-isolation", "partial-report", "manual-verification", "report-hygiene", "all-na-section", "flag-examples", "executive-summary", "provenance"]
+  "expected": ["dispatch", "p95-sample", "accelerator-timing", "failure-isolation", "partial-report", "manual-verification", "report-hygiene", "all-na-section", "na-criteria", "flag-examples", "executive-summary", "provenance"]
 }
