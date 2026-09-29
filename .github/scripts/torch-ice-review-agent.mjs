@@ -80,7 +80,7 @@ export function validateReference(ref, finding, batch) {
   if (ref.kind === 'snapshot') {
     if (!['base', 'head'].includes(ref.snapshot) || typeof ref.path !== 'string' || !Number.isSafeInteger(ref.line_start) || !Number.isSafeInteger(ref.line_end) || ref.line_start < 1 || ref.line_end < ref.line_start || ref.line_end - ref.line_start > 19) incomplete('snapshot reference range');
     if (ref.unit_id !== null || ref.view !== null || ref.side !== null) incomplete('snapshot reference provenance');
-    return;
+    return false;
   }
   const unit = batch.units.find((entry) => entry.id === ref.unit_id && entry.path === finding.path && entry.views.includes(ref.view));
   if (!unit || ref.view !== finding.view || ref.snapshot !== null || ref.path !== null || (finding.unit_ids && !finding.unit_ids.includes(ref.unit_id))) incomplete('reference provenance');
@@ -90,12 +90,14 @@ export function validateReference(ref, finding, batch) {
     const segment = evidence.split(/(?=^Path: )/m).find((part) => part.includes(ref.view === 'pr' ? 'PR diff (' : 'current base to head ('));
     const metadataLine = segment?.split(/\r?\n/).some((line) => /^(?:old mode|new mode|rename from|rename to|similarity index|Binary files|GIT binary patch|new file mode|deleted file mode|index)\b/.test(line) && quoted(line, ref.quote));
     if (ref.side !== null || ref.line_start !== null || ref.line_end !== null || !segment || /^@@ /m.test(segment) || !metadataLine) incomplete('metadata reference');
-    return;
+    return true;
   }
   if (!['old', 'new'].includes(ref.side) || !Number.isSafeInteger(ref.line_start) || !Number.isSafeInteger(ref.line_end) || ref.line_start < 1 || ref.line_end < ref.line_start || ref.line_end - ref.line_start > 19) incomplete('diff reference range');
   const lines = changedLines(evidence, ref.view, ref.side);
   for (let number = ref.line_start; number <= ref.line_end; number++) if (!lines.some((line) => line.number === number)) incomplete('diff reference lines');
-  if (!lines.some((line) => line.number >= ref.line_start && line.number <= ref.line_end && line.changed && quoted(line.text, ref.quote))) incomplete('diff reference quote');
+  const matches = lines.filter((line) => line.number >= ref.line_start && line.number <= ref.line_end && quoted(line.text, ref.quote));
+  if (!matches.length) incomplete('diff reference quote');
+  return matches.some((line) => line.changed);
 }
 
 export function validateQuality(result, batch) {
@@ -115,8 +117,8 @@ export function validateQuality(result, batch) {
   if (result.findings.some((_, index) => !result.checks.some((check) => check.finding_indexes.includes(index)))) incomplete('unlinked finding');
   for (const finding of result.findings) {
     if (!['blocking', 'major', 'minor'].includes(finding.severity) || !Array.isArray(finding.references) || !finding.references.length) incomplete('finding references');
-    for (const ref of finding.references) validateReference(ref, finding, batch);
-    if (!finding.references.some((ref) => ref.kind !== 'snapshot')) incomplete('finding changed anchor');
+    const anchors = finding.references.map((ref) => validateReference(ref, finding, batch));
+    if (!anchors.some(Boolean)) incomplete('finding changed anchor');
   }
 }
 
@@ -193,7 +195,7 @@ export function parseBatchResponse(response) {
 }
 
 export function batchStageInstructions(instructions, attempt, retryReason) {
-  return `${instructions}\n\nTrusted stage: batch. Return only review_batch JSON. Review every assigned unit ID and every trusted check ID exactly once; use not_applicable for checks unrelated to assigned changes. A violation must link to finding indexes; every finding needs a changed-source diff or metadata anchor. Verify flag, checklist, EVAL, and output routing through related snapshot files before judging dispatch. The manifest identifies each unit's offsets in the escaped diff. For diff references, set unit_id, view, side, and changed-line range; set snapshot and path to null, and quote an exact substring from the cited changed line without the diff marker. For snapshot references, set snapshot to base or head, path to the read file, and a short line range; set unit_id, view, and side to null, and quote an exact substring from that range. Use plain text in finding fields, no Markdown. Do not write final Markdown sections.${attempt ? ` The previous attempt failed validation; return a complete valid batch result.${retryReason === 'diff reference quote' ? ' A diff reference quote was invalid: copy an exact substring from the cited changed line and correct its side and line range.' : ''}${retryReason === 'snapshot reference shape' ? ' A snapshot reference was invalid: use the read snapshot and path, null diff fields, and a short line range containing its exact quote.' : ''}` : ''}`;
+  return `${instructions}\n\nTrusted stage: batch. Return only review_batch JSON. Review every assigned unit ID and every trusted check ID exactly once; use not_applicable for checks unrelated to assigned changes. A violation must link to finding indexes; every finding needs a changed-source diff or metadata anchor. Verify flag, checklist, EVAL, and output routing through related snapshot files before judging dispatch. The manifest identifies each unit's offsets in the escaped diff. For diff references, set unit_id, view, side, and a line range from assigned evidence; set snapshot and path to null, and quote an exact substring from a cited line without the diff marker. Check dispositions may cite context lines, but every finding needs at least one changed-line anchor. For snapshot references, set snapshot to base or head, path to the read file, and a short line range; set unit_id, view, and side to null, and quote an exact substring from that range. Use plain text in finding fields, no Markdown. Do not write final Markdown sections.${attempt ? ` The previous attempt failed validation; return a complete valid batch result.${retryReason === 'diff reference quote' ? ' A diff reference quote was invalid: copy an exact substring from the cited changed line and correct its side and line range.' : ''}${retryReason === 'snapshot reference shape' ? ' A snapshot reference was invalid: use the read snapshot and path, null diff fields, and a short line range containing its exact quote.' : ''}` : ''}`;
 }
 
 export function consolidationStageInstructions(instructions) {

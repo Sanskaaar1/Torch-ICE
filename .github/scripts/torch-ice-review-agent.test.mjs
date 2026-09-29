@@ -412,6 +412,17 @@ test('snapshot citations accept a verified short range with null diff fields', (
   assert.throws(() => agent.validateReference({ ...ref, unit_id: 'u1' }, {}, { units: [] }), /snapshot reference provenance/);
 });
 
+test('check citations may use context lines, while findings require a changed anchor', () => {
+  const unit = { id: 'u1', path: 'src/a.js', views: ['pr'], evidence: 'Path: src/a.js\nPR diff (modified)\n@@ -1,2 +1,2 @@\n context\n-old\n+new' };
+  const context = { kind: 'diff', unit_id: 'u1', view: 'pr', side: 'new', line_start: 1, line_end: 1, quote: 'context', snapshot: null, path: null };
+  const batch = { ids: ['u1'], units: [unit], checks: [{ id: 'general-correctness' }] };
+  const passing = { reviewed_unit_ids: ['u1'], checks: [{ id: 'general-correctness', status: 'pass', reason: 'the context is valid', references: [context], finding_indexes: [] }], findings: [] };
+  assert.deepEqual(agent.validateBatchResult(passing, batch), []);
+  const finding = { ...batchFinding, path: unit.path, view: 'pr', unit_ids: ['u1'], severity: 'major', references: [context] };
+  const violation = { reviewed_unit_ids: ['u1'], checks: [{ ...passing.checks[0], status: 'violation', finding_indexes: [0] }], findings: [finding] };
+  assert.throws(() => agent.validateBatchResult(violation, batch), /finding changed anchor/);
+});
+
 test('snapshot references must match complete trusted file lines', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-citation-'));
   const head = path.join(root, 'head');
