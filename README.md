@@ -249,6 +249,8 @@ the advisory Markdown. Missing evidence and exceeded limits produce a failure
 comment. If either attempt has independently verified findings but the review
 still fails, the failure comment can include verified findings after a fresh
 base/head check while stating that the review is incomplete.
+For a citation failure, the second attempt replaces references at specific
+finding indexes; it cannot regenerate or duplicate the finding text.
 The base and head SHAs are checked again immediately before posting success.
 
 Review-quality fixtures can be checked locally with

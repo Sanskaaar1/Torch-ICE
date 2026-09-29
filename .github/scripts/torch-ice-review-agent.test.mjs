@@ -365,6 +365,20 @@ test('citation retry cannot silently discard a prior finding', async () => {
   assert.equal(attempts[1].draft.findings.length, 1);
 });
 
+test('reference-shape failures request indexed citation repair', async () => {
+  const error = new Error('Review evidence incomplete: reference shape.');
+  error.reviewDraft = { reviewed_unit_ids: ['u1'], findings: [batchFinding] };
+  error.repairIndexes = [0];
+  const result = await agent.reviewBatches([batchU1], async (_batch, attempt, reason, draft, indexes) => {
+    if (!attempt) throw error;
+    assert.equal(reason, 'citation repair');
+    assert.equal(draft.findings.length, 1);
+    assert.deepEqual(indexes, [0]);
+    return { ...completeBatch, findings: [batchFinding] };
+  }, Date.now() + 60_000);
+  assert.equal(result.length, 1);
+});
+
 test('a corrected retry may remove an unsupported finding', async () => {
   const error = new Error('Review evidence incomplete: diff reference quote absent from assigned evidence.');
   error.reviewDraft = { reviewed_unit_ids: ['u1'], findings: [batchFinding,
@@ -564,12 +578,15 @@ test('live replay carries a rejected finding into its citation retry', async () 
     globalThis.fetch = async (_url, options) => {
       const body = JSON.parse(options.body);
       requests.push(body);
-      const response = { reviewed_unit_ids: prepared.batches[0].ids, findings: [{ ...finding, references: [{ ...finding.references[0], quote: requests.length === 1 ? '' : quote }] }] };
+      const response = requests.length === 1
+        ? { reviewed_unit_ids: prepared.batches[0].ids, findings: [finding] }
+        : { corrections: [{ index: 0, references: [{ ...finding.references[0], quote }] }] };
       return { ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify(response), usage: { input_tokens: 1 } }) };
     };
     const checklist = await fs.readFile('.claude/skills/torch-ice-review/checklist.md', 'utf8');
     const result = await liveTrial(prepared, 'trusted instructions', checklist, []);
     assert.equal(requests.length, 2);
+    assert.equal(requests[1].text.format.name, 'citation_corrections');
     assert.match(requests[1].input, /untrusted_prior_review/);
     assert.match(requests[1].input, /new guidance breaks the documented flow/);
     assert.match(result.markdown, /new guidance breaks the documented flow/);
@@ -598,6 +615,46 @@ test('live replay retains verified findings when citation retry still fails', as
     });
     assert.equal(requests, 2);
   } finally { globalThis.fetch = originalFetch; await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('citation retry repairs references without regenerating or duplicating findings', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-citation-repair-'));
+  const originalFetch = globalThis.fetch;
+  try {
+    const prepared = await prepareFixture('general', root);
+    const unit = prepared.units[0];
+    const quote = unit.evidence.split('\n').find((line) => line.startsWith('+') && !line.startsWith('+++')).slice(1);
+    const first = { ...batchFinding, unit_ids: [unit.id], path: unit.path,
+      references: [{ ...batchFinding.references[0], unit_id: unit.id, line_start: null, line_end: null, quote }] };
+    const second = { ...first, evidence: 'second real issue', impact: 'second impact', fix: 'second fix',
+      references: [{ ...first.references[0], quote: 'invented source' }] };
+    const requests = [];
+    globalThis.fetch = async (_url, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(body);
+      const output = requests.length === 1
+        ? { reviewed_unit_ids: prepared.batches[0].ids, findings: [first, second] }
+        : { corrections: [{ index: 1, references: [{ ...first.references[0] }] }] };
+      return { ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify(output), usage: { input_tokens: 1 } }) };
+    };
+    const checklist = await fs.readFile('.claude/skills/torch-ice-review/checklist.md', 'utf8');
+    const result = await liveTrial(prepared, 'trusted instructions', checklist, []);
+    assert.deepEqual(requests.map((request) => request.text.format.name), ['review_batch', 'citation_corrections']);
+    assert.equal(result.findings, 2);
+    assert.match(result.markdown, /changed call/);
+    assert.match(result.markdown, /second real issue/);
+    assert.equal(result.markdown.match(/### Finding \d+/g).length, 2);
+    assert.doesNotMatch(requests[1].input.slice(requests[1].input.indexOf('<untrusted_prior_review>')), /changed call/);
+  } finally { globalThis.fetch = originalFetch; await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('citation corrections require one referenced slot each', () => {
+  const draft = { reviewed_unit_ids: ['u1'], findings: [batchFinding, { ...batchFinding, evidence: 'another issue' }] };
+  const correction = (index) => ({ index, references: [batchFinding.references[0]] });
+  assert.throws(() => agent.applyCitationCorrections(draft, { corrections: [correction(0), correction(0)] }, [0, 1]), /citation correction accounting/);
+  assert.throws(() => agent.applyCitationCorrections(draft, { corrections: [correction(99)] }, [1]), /citation correction accounting/);
+  assert.throws(() => agent.applyCitationCorrections(draft, { corrections: [correction(99)] }, [99]), /citation correction accounting/);
+  assert.throws(() => agent.applyCitationCorrections(draft, { corrections: [] }, [1]), /citation correction accounting/);
 });
 
 test('verified first-pass findings survive a failed citation retry request', async () => {

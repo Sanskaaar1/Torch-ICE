@@ -8,7 +8,8 @@ import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { packReviewBatches } from './torch-ice-review-evidence.mjs';
 import {
-  BATCH_RESULT_SCHEMA, EXPLORATION_TOOLS, batchStageInstructions, buildReviewInput, parseBatchResponse,
+  BATCH_RESULT_SCHEMA, CITATION_CORRECTIONS_SCHEMA, EXPLORATION_TOOLS, applyCitationCorrections,
+  batchStageInstructions, buildReviewInput, parseBatchResponse,
   prepareReviewUnits, readFileContext, redactSensitiveText, renderFindings, reviewBatches, verifiedPartialFindings,
   reviewRequestTimeoutMs, runExplorationLoop, selectReviewMode, validateBatchResult, verifySnapshotReferences,
 } from './torch-ice-review-agent.mjs';
@@ -90,7 +91,8 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
   const deadline = Date.now() + 14 * 60_000;
   const started = Date.now();
   const explorationBudget = { calls: 0, characters: 0 };
-  const findings = await reviewBatches(batches, async (batch, attempt, retryReason, retryDraft) => {
+  const findings = await reviewBatches(batches, async (batch, attempt, retryReason, retryDraft, repairIndexes) => {
+    const repairing = Boolean(attempt && retryDraft && repairIndexes?.length);
     const paths = new Set(batch.units.map((unit) => unit.path));
     const batchFiles = files.filter((file) => paths.has(file.filename));
     const assessmentFiles = batchFiles.filter((file) => /\/(?:EVAL|checklist)\.md$/.test(file.filename));
@@ -98,16 +100,18 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
       ? [{ filename: 'SKILL.md' }, ...assessmentFiles, ...batchFiles.filter((file) => file.filename !== 'SKILL.md' && !assessmentFiles.includes(file))]
       : batchFiles;
     const fileContext = await readFileContext(snapshots.head, contextFiles);
-    const priorReview = retryDraft ? `\n\n<untrusted_prior_review>\n${JSON.stringify(retryDraft).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}\n</untrusted_prior_review>` : '';
+    const prior = repairing ? repairIndexes.map((index) => ({ index, finding: retryDraft.findings[index] })) : retryDraft;
+    const priorReview = prior ? `\n\n<untrusted_prior_review>\n${JSON.stringify(prior).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}\n</untrusted_prior_review>` : '';
     const input = buildReviewInput({ pr: { number: 9, title: fixture.name }, headSha: fixture.head, files: batchFiles,
       batchEvidence: batch.evidence, fileContext, history: [], checklist, reviewMode, reservedChars: priorReview.length }).input;
     const requestInput = redactSensitiveText(`${input}${priorReview}`).text;
-    const stage = batchStageInstructions(instructions, attempt, retryReason);
-    const exploration = await runExplorationLoop((turns, { toolChoice = 'auto' } = {}) => requestModel({ instructions: stage, schema: BATCH_RESULT_SCHEMA, name: 'review_batch', input: turns, deadline, usage,
+    const stage = batchStageInstructions(instructions, attempt, retryReason, repairing ? repairIndexes : []);
+    const exploration = await runExplorationLoop((turns, { toolChoice = 'auto' } = {}) => requestModel({ instructions: stage, schema: repairing ? CITATION_CORRECTIONS_SCHEMA : BATCH_RESULT_SCHEMA, name: repairing ? 'citation_corrections' : 'review_batch', input: turns, deadline, usage,
       tools: EXPLORATION_TOOLS, toolChoice, maxOutputTokens: 8192 }), requestInput, snapshots, explorationBudget);
     let result;
     try {
-      result = parseBatchResponse(exploration.response);
+      const parsed = parseBatchResponse(exploration.response);
+      result = repairing ? applyCitationCorrections(retryDraft, parsed, repairIndexes) : parsed;
       validateBatchResult(result, batch);
       await verifySnapshotReferences(result.findings, snapshots);
       return result;
@@ -115,6 +119,7 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
       if (result && String(error.message).startsWith('Review evidence incomplete:')) error.reviewDraft = result;
       if (result && String(error.message).startsWith('Review evidence incomplete:')) {
         const partial = await verifiedPartialFindings(result, batch, snapshots);
+        if (attempt === 0 && Array.isArray(result.findings)) error.repairIndexes = result.findings.flatMap((finding, index) => partial.includes(finding) ? [] : [index]);
         if (partial.length) {
           try { error.partialMarkdown = renderFindings({ findings: partial, pr: { number: 9 }, reviewMode }); }
           catch { /* Preserve the original validation error. */ }

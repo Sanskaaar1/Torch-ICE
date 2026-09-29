@@ -157,6 +157,26 @@ export const BATCH_RESULT_SCHEMA = {
     findings: { type: 'array', items: { type: 'object', additionalProperties: false, required: Object.keys(FINDING_PROPERTIES), properties: FINDING_PROPERTIES } },
   },
 };
+export const CITATION_CORRECTIONS_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['corrections'],
+  properties: { corrections: { type: 'array', items: { type: 'object', additionalProperties: false,
+    required: ['index', 'references'], properties: { index: { type: 'integer', minimum: 0 }, references: FINDING_PROPERTIES.references },
+  } } },
+};
+
+export function applyCitationCorrections(draft, reply, indexes) {
+  const corrections = reply?.corrections;
+  if (!Array.isArray(draft?.findings) || !Array.isArray(indexes) || !indexes.length ||
+      indexes.some((index) => !Number.isSafeInteger(index) || index < 0 || index >= draft.findings.length) ||
+      !Array.isArray(corrections) || corrections.length !== indexes.length ||
+      Object.keys(reply).join() !== 'corrections' ||
+      corrections.some((item) => !item || Object.keys(item).sort().join() !== 'index,references' ||
+        !indexes.includes(item.index) || !Array.isArray(item.references) || !item.references.length) ||
+      new Set(corrections.map((item) => item.index)).size !== indexes.length) incomplete('citation correction accounting');
+  const references = new Map(corrections.map((item) => [item.index, item.references]));
+  return { reviewed_unit_ids: draft.reviewed_unit_ids,
+    findings: draft.findings.map((finding, index) => references.has(index) ? { ...finding, references: references.get(index) } : finding) };
+}
 
 export function validateBatchResult(result, batch) {
   const invalid = (reason = 'invalid batch result') => { throw new Error(`Review evidence incomplete: ${reason}.`); };
@@ -200,7 +220,8 @@ export function parseBatchResponse(response) {
   catch { throw new Error('Review evidence incomplete: invalid batch JSON.'); }
 }
 
-export function batchStageInstructions(instructions, attempt, retryReason) {
+export function batchStageInstructions(instructions, attempt, retryReason, repairIndexes = []) {
+  if (repairIndexes.length) return `${instructions}\n\nTrusted stage: citation repair. Return only citation_corrections JSON. Keep every original finding's prose and metadata unchanged. For each original finding index ${repairIndexes.join(', ')}, return exactly one correction with that index and replacement references. Do not return finding text or additional findings. Use the assigned diff and read-only snapshot tools to copy short, verifiable source quotes. A corrected finding must retain a changed-source anchor; supporting snapshot citations need an exact quote.`;
   const correction = !attempt ? '' : retryReason === 'empty result'
     ? ' The first pass found no issues. Take an independent second look for missed behavior conflicts, especially input branches and output contracts. Return any evidenced finding, or an empty result if none exists.'
     : ` The previous attempt failed validation; return a complete corrected result. Preserve prior substantive findings while correcting their citations.${retryReason === 'diff reference quote' ? ' Copy a short exact substring from the changed line.' : ''}${retryReason === 'snapshot reference shape' ? ' Check snapshot path, line, and exact quote.' : ''}`;
@@ -213,10 +234,11 @@ export async function reviewBatches(batches, requestBatch, deadline) {
     let retryReason;
     let retryDraft;
     let firstPartial;
+    let repairIndexes;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         if (Date.now() >= deadline) throw new Error('Review evidence incomplete: deadline.');
-        const result = await requestBatch(batch, attempt, retryReason, retryDraft);
+        const result = await requestBatch(batch, attempt, retryReason, retryDraft, repairIndexes);
         if (Date.now() >= deadline) throw new Error('Review evidence incomplete: deadline.');
         validateBatchResult(result, batch);
         if (retryDraft?.findings?.length && !result.findings.length) incomplete('retry dropped prior findings');
@@ -235,7 +257,9 @@ export async function reviewBatches(batches, requestBatch, deadline) {
         const message = String(error.message);
         retryDraft = error.reviewDraft;
         retryReason = message.includes('Review evidence incomplete: diff reference quote') ? 'diff reference quote'
-          : message.includes('Review evidence incomplete: invalid snapshot reference') || message.includes('Review evidence incomplete: snapshot reference') ? 'snapshot reference shape' : undefined;
+          : message.includes('Review evidence incomplete: invalid snapshot reference') || message.includes('Review evidence incomplete: snapshot reference') ? 'snapshot reference shape'
+          : message.startsWith('Review evidence incomplete:') && /\breferences?\b|\bchanged anchor\b/.test(message) ? 'citation repair' : undefined;
+        repairIndexes = retryReason ? error.repairIndexes : undefined;
       }
     }
   }
@@ -839,7 +863,8 @@ async function main() {
     }
     // All attempts and batches share the original aggregate exploration limits.
     const explorationBudget = { calls: 0, characters: 0 };
-    const findings = await reviewBatches(batches, async (batch, attempt, retryReason, retryDraft) => {
+    const findings = await reviewBatches(batches, async (batch, attempt, retryReason, retryDraft, repairIndexes) => {
+      const repairing = Boolean(attempt && retryDraft && repairIndexes?.length);
       const paths = new Set(batch.units.map((unit) => unit.path));
       const batchFiles = normalizedFiles.filter((file) => paths.has(file.filename));
       const assessmentFiles = batchFiles.filter((file) => /\/(?:EVAL|checklist)\.md$/.test(file.filename));
@@ -847,17 +872,18 @@ async function main() {
         ? [{ filename: 'SKILL.md' }, ...assessmentFiles, ...batchFiles.filter((file) => file.filename !== 'SKILL.md' && !assessmentFiles.includes(file))]
         : batchFiles;
       const fileContext = await readFileContext(snapshots.head, contextFiles);
-      const priorReview = retryDraft ? `\n\n<untrusted_prior_review>\n${escapeUntrustedSection(JSON.stringify(retryDraft))}\n</untrusted_prior_review>` : '';
+      const prior = repairing ? repairIndexes.map((index) => ({ index, finding: retryDraft.findings[index] })) : retryDraft;
+      const priorReview = prior ? `\n\n<untrusted_prior_review>\n${escapeUntrustedSection(JSON.stringify(prior))}\n</untrusted_prior_review>` : '';
       const reviewInput = buildReviewInput({ commandPrompt: command.prompt, pr, headSha, files: batchFiles, fileContext,
         batchEvidence: batch.evidence, history: history.included, checklist, reviewMode, reservedChars: priorReview.length });
       const input = redactSensitiveText(`${reviewInput.input}${priorReview}`).text;
       if (input.length > INPUT_MAX_CHARS) throw new Error('Review input exceeded its fixed section budgets.');
-      const batchInstructions = batchStageInstructions(instructions, attempt, retryReason);
+      const batchInstructions = batchStageInstructions(instructions, attempt, retryReason, repairing ? repairIndexes : []);
       const exploration = await runExplorationLoop(async (requestInput, { toolChoice = 'auto' } = {}) => {
         let response;
         try {
           response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', signal: AbortSignal.timeout(reviewRequestTimeoutMs(deadline)), headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({
-            model: 'gpt-5.6-terra', reasoning: { effort: 'high' }, text: { format: { type: 'json_schema', name: 'review_batch', strict: true, schema: BATCH_RESULT_SCHEMA }, verbosity: 'medium' },
+            model: 'gpt-5.6-terra', reasoning: { effort: 'high' }, text: { format: { type: 'json_schema', name: repairing ? 'citation_corrections' : 'review_batch', strict: true, schema: repairing ? CITATION_CORRECTIONS_SCHEMA : BATCH_RESULT_SCHEMA }, verbosity: 'medium' },
             max_output_tokens: attempt ? RETRY_MAX_OUTPUT_TOKENS : INITIAL_MAX_OUTPUT_TOKENS, store: false, instructions: batchInstructions,
             tools: EXPLORATION_TOOLS, tool_choice: toolChoice, parallel_tool_calls: false, input: requestInput,
           }) });
@@ -872,7 +898,8 @@ async function main() {
         exploration_tool_calls: exploration.calls, exploration_characters_sent: exploration.characters, usage: exploration.response.usage ?? null });
       let result;
       try {
-        result = parseBatchResponse(exploration.response);
+        const parsed = parseBatchResponse(exploration.response);
+        result = repairing ? applyCitationCorrections(retryDraft, parsed, repairIndexes) : parsed;
         validateBatchResult(result, batch);
         await verifySnapshotReferences(result.findings, snapshots);
         return result;
@@ -880,6 +907,7 @@ async function main() {
         if (attempt === 0 && result && String(error.message).startsWith('Review evidence incomplete:')) error.reviewDraft = result;
         if (result && String(error.message).startsWith('Review evidence incomplete:')) {
           const partial = await verifiedPartialFindings(result, batch, snapshots);
+          if (attempt === 0 && Array.isArray(result.findings)) error.repairIndexes = result.findings.flatMap((finding, index) => partial.includes(finding) ? [] : [index]);
           if (partial.length) {
             try {
               error.partialMarkdown = renderFindings({ findings: partial, pr, reviewMode });
