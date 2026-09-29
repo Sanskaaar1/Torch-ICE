@@ -47,7 +47,14 @@ absent from the dimension: an explicit incorporation of shared rules counts.
 A shared rule alone does not satisfy a checklist requirement for the new
 `EVAL.md` to state or explicitly incorporate it; describe a missing local
 instruction without claiming the behavior is absent everywhere.
-Do not turn "also produce" into "only produce" when describing a flag.
+For each changed `EVAL.md`, decide separately whether it states or explicitly
+incorporates failure isolation, partial reports, manual verification, and
+removing internal instructions from the copied report. If a required local
+instruction is missing, include that gap in a finding even when the shared
+skill contains the rule. When the EVAL copies a checklist, inspect whether
+the copied scoring and procedure text is stripped from the final report.
+The `--performance` flag adds a performance assessment to core readiness;
+never call that run "performance-only."
 For performance instructions, assess warmup and measurement counts separately;
 five measured runs cannot support a useful p95 tail estimate. Check whether
 asynchronous accelerator work is timed with synchronization, completed device
@@ -55,7 +62,9 @@ events, or an equivalent harness. Assess failure isolation, partial reports,
 manual verification, and report hygiene individually. Prioritize unreachable
 dispatch and invalid measurements above template and metadata omissions.
 When N/A rows are excluded, check empty-section denominators and distinguish
-an inapplicable workload from a missing benchmark or target.
+an inapplicable workload from a missing benchmark or target. A missing target
+with an applicable workload needs a documented baseline or a zero score, not
+an N/A exclusion.
 
 For General Review, trace changed behavior through its immediate callers,
 data flow, and trust boundaries before writing. Report only an evidenced,
