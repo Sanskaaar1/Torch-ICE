@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { packReviewBatches } from './torch-ice-review-evidence.mjs';
 import {
   BATCH_RESULT_SCHEMA, EXPLORATION_TOOLS, batchStageInstructions, buildReviewInput, parseBatchResponse,
-  prepareReviewUnits, readFileContext, redactSensitiveText, renderFindings, reviewBatches,
+  prepareReviewUnits, readFileContext, redactSensitiveText, renderFindings, reviewBatches, verifiedPartialFindings,
   reviewRequestTimeoutMs, runExplorationLoop, selectReviewMode, validateBatchResult, verifySnapshotReferences,
 } from './torch-ice-review-agent.mjs';
 
@@ -113,6 +113,13 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
       return result;
     } catch (error) {
       if (result && String(error.message).startsWith('Review evidence incomplete:')) error.reviewDraft = result;
+      if (attempt === 1 && result && String(error.message).startsWith('Review evidence incomplete:')) {
+        const partial = await verifiedPartialFindings(result, batch, snapshots);
+        if (partial.length) {
+          try { error.partialMarkdown = renderFindings({ findings: partial, pr: { number: 9 }, reviewMode }); }
+          catch { /* Preserve the original validation error. */ }
+        }
+      }
       throw error;
     }
   }, deadline);
@@ -141,7 +148,7 @@ async function main() {
       else for (let index = 0; index < (name === 'general' ? 1 : 3); index++) {
         const usage = [];
         try { output.trials.push({ ...await liveTrial(prepared, instructions, checklist, usage), index, usage }); }
-        catch (error) { failures++; output.trials.push({ name, index, error: error.message, rejectedShape: rejectedShape(error), usage }); }
+        catch (error) { failures++; output.trials.push({ name, index, error: error.message, partial_markdown: error.partialMarkdown ?? null, rejectedShape: rejectedShape(error), usage }); }
       }
     } catch (error) {
       failures++;

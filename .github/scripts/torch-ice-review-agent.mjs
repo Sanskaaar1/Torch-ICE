@@ -178,6 +178,20 @@ export function validateBatchResult(result, batch) {
   return result.findings;
 }
 
+export async function verifiedPartialFindings(result, batch, snapshots) {
+  const accepted = [];
+  for (const finding of Array.isArray(result?.findings) ? result.findings : []) {
+    try {
+      validateBatchResult({ reviewed_unit_ids: batch.ids, findings: [finding] }, batch);
+      await verifySnapshotReferences([finding], snapshots);
+      accepted.push(finding);
+    } catch (error) {
+      if (!String(error.message).startsWith('Review evidence incomplete:')) throw error;
+    }
+  }
+  return accepted;
+}
+
 export function parseBatchResponse(response) {
   if (response?.status !== 'completed' || response.output?.some((item) => item.content?.some((part) => part.type === 'refusal'))) {
     throw new Error('Review evidence incomplete: batch response did not complete or was refused.');
@@ -705,9 +719,14 @@ export function reviewRequestTimeoutMs(deadline, now = Date.now()) {
 export function formatFailureComment({ error, repository, headSha = null, force = false }) {
   const safe = safeFailureReason(error);
   const marker = headSha ? `<!-- torch-ice-review-agent: failure head_sha=${headSha}${force ? ' attempt=force' : ''} -->` : '<!-- torch-ice-review-agent: failure -->';
-  return { safe, body: `Review agent could not complete this run: ${safe} See [workflow logs](${runUrl(repository)}).\n\n${marker}` };
+  const partial = error.partialMarkdown ? `\n\nVerified findings from this incomplete run; other issues may be missing:\n\n${error.partialMarkdown}` : '';
+  return { safe, body: `Review agent could not complete this run: ${safe} See [workflow logs](${runUrl(repository)}).${partial}\n\n${marker}` };
 }
 async function reportFailure({ api, prNumber, repository, error, headSha, force }) {
+  if (error.partialMarkdown) {
+    try { verifyCheckoutShas({ baseSha: error.partialBaseSha, headSha, pr: await githubJson(`${api}/pulls/${prNumber}`) }); }
+    catch { error.partialMarkdown = null; }
+  }
   const failure = formatFailureComment({ error, repository, headSha, force });
   log('review_failure', { pr_number: prNumber, reason: failure.safe });
   await postComment(api, prNumber, failure.body).catch(() => {});
@@ -844,6 +863,15 @@ async function main() {
         return result;
       } catch (error) {
         if (attempt === 0 && result && String(error.message).startsWith('Review evidence incomplete:')) error.reviewDraft = result;
+        if (attempt === 1 && result && String(error.message).startsWith('Review evidence incomplete:')) {
+          const partial = await verifiedPartialFindings(result, batch, snapshots);
+          if (partial.length) {
+            try {
+              error.partialMarkdown = renderFindings({ findings: partial, pr, reviewMode });
+              error.partialBaseSha = baseSha;
+            } catch (renderError) { log('partial_review_omitted', { reason: safeFailureReason(renderError) }); }
+          }
+        }
         if (String(error.message).startsWith('Review evidence incomplete:')) log('review_batch_rejected', { attempt, reason: error.message,
           finding_count: Array.isArray(result?.findings) ? result.findings.length : null,
           reference_shapes: Array.isArray(result?.findings) ? result.findings.slice(0, 8).flatMap((finding) =>

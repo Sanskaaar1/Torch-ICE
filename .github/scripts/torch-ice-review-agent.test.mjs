@@ -365,6 +365,23 @@ test('citation retry cannot silently discard a prior finding', async () => {
   assert.equal(attempts[1].draft.findings.length, 1);
 });
 
+test('an incomplete review can show only independently verified findings', async () => {
+  const invalid = { ...batchFinding, evidence: 'unverified claim', references: [{ ...batchFinding.references[0], quote: 'invented source' }] };
+  const invalidSnapshot = { ...batchFinding, evidence: 'unverified context', references: [batchFinding.references[0],
+    { kind: 'snapshot', unit_id: null, view: null, side: null, line_start: 1, line_end: 1, quote: 'invented context', snapshot: 'head', path: 'SKILL.md' }] };
+  const accepted = await agent.verifiedPartialFindings({ findings: [batchFinding, invalid, invalidSnapshot] }, batchU1, {});
+  assert.equal(accepted.length, 1);
+  assert.equal(accepted[0].evidence, 'changed call');
+  const partialMarkdown = agent.renderFindings({ findings: accepted, pr: { number: 9 }, reviewMode: 'general' });
+  const error = Object.assign(new Error('Review evidence incomplete: diff reference quote absent from assigned evidence.'), { partialMarkdown });
+  const failure = formatFailureComment({ error, repository: { full_name: 'owner/repo' }, headSha: 'abc' });
+  assert.match(failure.body, /Verified findings from this incomplete run/);
+  assert.match(failure.body, /changed call/);
+  assert.doesNotMatch(failure.body, /unverified claim/);
+  assert.doesNotMatch(failure.body, /unverified context/);
+  assert.match(failure.body, /<!-- torch-ice-review-agent: failure head_sha=abc -->/);
+});
+
 test('snapshot citations accept a verified short range with null diff fields', () => {
   const ref = { kind: 'snapshot', unit_id: null, view: null, side: null, line_start: 2, line_end: 3, quote: 'shared rule', snapshot: 'head', path: 'SKILL.md' };
   assert.doesNotThrow(() => agent.validateReference(ref, {}, { units: [] }));
@@ -529,6 +546,30 @@ test('live replay carries a rejected finding into its citation retry', async () 
     assert.match(requests[1].input, /untrusted_prior_review/);
     assert.match(requests[1].input, /new guidance breaks the documented flow/);
     assert.match(result.markdown, /new guidance breaks the documented flow/);
+  } finally { globalThis.fetch = originalFetch; await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('live replay retains verified findings when citation retry still fails', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-partial-'));
+  const originalFetch = globalThis.fetch;
+  try {
+    const prepared = await prepareFixture('general', root);
+    const unit = prepared.units[0];
+    const quote = unit.evidence.split('\n').find((line) => line.startsWith('+') && !line.startsWith('+++')).slice(1);
+    const valid = { ...batchFinding, unit_ids: [unit.id], path: unit.path, references: [{ ...batchFinding.references[0], unit_id: unit.id, line_start: null, line_end: null, quote }] };
+    let requests = 0;
+    globalThis.fetch = async () => {
+      requests++;
+      const output = { reviewed_unit_ids: prepared.batches[0].ids, findings: [valid, { ...valid, evidence: 'invented claim', references: [{ ...valid.references[0], quote: 'invented source' }] }] };
+      return { ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify(output), usage: { input_tokens: 1 } }) };
+    };
+    const checklist = await fs.readFile('.claude/skills/torch-ice-review/checklist.md', 'utf8');
+    await assert.rejects(liveTrial(prepared, 'trusted instructions', checklist, []), (error) => {
+      assert.match(error.partialMarkdown, /changed call/);
+      assert.doesNotMatch(error.partialMarkdown, /invented claim/);
+      return true;
+    });
+    assert.equal(requests, 2);
   } finally { globalThis.fetch = originalFetch; await fs.rm(root, { recursive: true, force: true }); }
 });
 

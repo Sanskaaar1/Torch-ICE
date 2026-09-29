@@ -245,8 +245,10 @@ attempt for a rejected or empty review. The response accounts for every
 evidence unit. Changed-line citations and supporting snapshot quotes are
 checked against pinned evidence. The application removes exact duplicates,
 sorts findings by severity, and renders
-the advisory Markdown. Missing evidence, exceeded limits, or invalid results
-produce a failure comment without partial findings.
+the advisory Markdown. Missing evidence and exceeded limits produce a failure
+comment. If a corrected model response still has invalid citations, the
+failure comment may include independently verified findings from the same
+base and head, while stating that the review is incomplete.
 The base and head SHAs are checked again immediately before posting success.
 
 Review-quality fixtures can be checked locally with
