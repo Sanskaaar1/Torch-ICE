@@ -203,7 +203,7 @@ export function parseBatchResponse(response) {
 export function batchStageInstructions(instructions, attempt, retryReason) {
   const correction = !attempt ? '' : retryReason === 'empty result'
     ? ' The first pass found no issues. Take an independent second look for missed behavior conflicts, especially input branches and output contracts. Return any evidenced finding, or an empty result if none exists.'
-    : ` The previous attempt failed validation. The controller retained any independently verified findings; return corrections for rejected findings and any newly found issues without repeating retained findings.${retryReason === 'diff reference quote' ? ' Copy a short exact substring from the changed line.' : ''}${retryReason === 'snapshot reference shape' ? ' Check snapshot path, line, and exact quote.' : ''}`;
+    : ` The previous attempt failed validation; return a complete corrected result. Preserve prior substantive findings while correcting their citations.${retryReason === 'diff reference quote' ? ' Copy a short exact substring from the changed line.' : ''}${retryReason === 'snapshot reference shape' ? ' Check snapshot path, line, and exact quote.' : ''}`;
   return `${instructions}\n\nTrusted stage: review. Return only review_batch JSON. Review every Unit ID marked in the evidence exactly once. Report only actionable findings with a changed-source diff or metadata anchor. Trace related flag, checklist, EVAL, and report paths through snapshot tools where needed. For a unique diff quote, set line_start and line_end to null so the controller resolves its source line. Snapshot quotes may use the XML escaping shown in supplied context. Use plain text in finding fields; the renderer formats validated references.${correction}`;
 }
 
@@ -213,20 +213,18 @@ export async function reviewBatches(batches, requestBatch, deadline) {
     let retryReason;
     let retryDraft;
     let firstPartial;
-    let kept = [];
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         if (Date.now() >= deadline) throw new Error('Review evidence incomplete: deadline.');
-        const result = await requestBatch(batch, attempt, retryReason, retryDraft, kept);
+        const result = await requestBatch(batch, attempt, retryReason, retryDraft);
         if (Date.now() >= deadline) throw new Error('Review evidence incomplete: deadline.');
         validateBatchResult(result, batch);
         if (retryDraft?.findings?.length && !result.findings.length) incomplete('retry dropped prior findings');
         if (attempt === 0 && !result.findings.length) { retryReason = 'empty result'; continue; }
-        const accepted = [...kept, ...result.findings];
-        for (const finding of accepted) for (const ref of finding.references) {
+        for (const finding of result.findings) for (const ref of finding.references) {
           if (ref.kind !== 'snapshot') ref.source_path = batch.units.find((unit) => unit.id === ref.unit_id).path;
         }
-        findings.push(...accepted);
+        findings.push(...result.findings);
         break;
       } catch (error) {
         if (attempt === 1) {
@@ -235,9 +233,7 @@ export async function reviewBatches(batches, requestBatch, deadline) {
         }
         if (error.partialMarkdown) firstPartial = { partialMarkdown: error.partialMarkdown, partialBaseSha: error.partialBaseSha };
         const message = String(error.message);
-        kept = error.verifiedFindings ?? [];
         retryDraft = error.reviewDraft;
-        if (kept.length && Array.isArray(retryDraft?.findings)) retryDraft = { ...retryDraft, findings: retryDraft.findings.filter((finding) => !kept.includes(finding)) };
         retryReason = message.includes('Review evidence incomplete: diff reference quote') ? 'diff reference quote'
           : message.includes('Review evidence incomplete: invalid snapshot reference') || message.includes('Review evidence incomplete: snapshot reference') ? 'snapshot reference shape' : undefined;
       }
@@ -843,7 +839,7 @@ async function main() {
     }
     // All attempts and batches share the original aggregate exploration limits.
     const explorationBudget = { calls: 0, characters: 0 };
-    const findings = await reviewBatches(batches, async (batch, attempt, retryReason, retryDraft, kept) => {
+    const findings = await reviewBatches(batches, async (batch, attempt, retryReason, retryDraft) => {
       const paths = new Set(batch.units.map((unit) => unit.path));
       const batchFiles = normalizedFiles.filter((file) => paths.has(file.filename));
       const assessmentFiles = batchFiles.filter((file) => /\/(?:EVAL|checklist)\.md$/.test(file.filename));
@@ -884,10 +880,9 @@ async function main() {
         if (attempt === 0 && result && String(error.message).startsWith('Review evidence incomplete:')) error.reviewDraft = result;
         if (result && String(error.message).startsWith('Review evidence incomplete:')) {
           const partial = await verifiedPartialFindings(result, batch, snapshots);
-          error.verifiedFindings = partial;
-          if (kept.length || partial.length) {
+          if (partial.length) {
             try {
-              error.partialMarkdown = renderFindings({ findings: [...kept, ...partial], pr, reviewMode });
+              error.partialMarkdown = renderFindings({ findings: partial, pr, reviewMode });
               error.partialBaseSha = baseSha;
             } catch (renderError) { log('partial_review_omitted', { reason: safeFailureReason(renderError) }); }
           }
