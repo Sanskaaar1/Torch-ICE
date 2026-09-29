@@ -600,6 +600,33 @@ test('live replay retains verified findings when citation retry still fails', as
   } finally { globalThis.fetch = originalFetch; await fs.rm(root, { recursive: true, force: true }); }
 });
 
+test('verified first-pass findings survive a failed citation retry request', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-retry-timeout-'));
+  const originalFetch = globalThis.fetch;
+  try {
+    const prepared = await prepareFixture('general', root);
+    const unit = prepared.units[0];
+    const quote = unit.evidence.split('\n').find((line) => line.startsWith('+') && !line.startsWith('+++')).slice(1);
+    const valid = { ...batchFinding, unit_ids: [unit.id], path: unit.path,
+      references: [{ ...batchFinding.references[0], unit_id: unit.id, line_start: null, line_end: null, quote }] };
+    let requests = 0;
+    globalThis.fetch = async () => {
+      if (++requests === 2) return { ok: false, status: 503 };
+      const output = { reviewed_unit_ids: prepared.batches[0].ids, findings: [valid,
+        { ...valid, evidence: 'invented claim', references: [{ ...valid.references[0], quote: 'invented source' }] }] };
+      return { ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify(output), usage: { input_tokens: 1 } }) };
+    };
+    const checklist = await fs.readFile('.claude/skills/torch-ice-review/checklist.md', 'utf8');
+    await assert.rejects(liveTrial(prepared, 'trusted instructions', checklist, []), (error) => {
+      assert.match(error.message, /OpenAI request failed \(503\)/);
+      assert.match(error.partialMarkdown, /changed call/);
+      assert.doesNotMatch(error.partialMarkdown, /invented claim/);
+      return true;
+    });
+    assert.equal(requests, 2);
+  } finally { globalThis.fetch = originalFetch; await fs.rm(root, { recursive: true, force: true }); }
+});
+
 test('PR #9 replay reviews the complete diff and shared rules in one packet', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-one-pass-'));
   const originalFetch = globalThis.fetch;

@@ -113,7 +113,7 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
       return result;
     } catch (error) {
       if (result && String(error.message).startsWith('Review evidence incomplete:')) error.reviewDraft = result;
-      if (attempt === 1 && result && String(error.message).startsWith('Review evidence incomplete:')) {
+      if (result && String(error.message).startsWith('Review evidence incomplete:')) {
         const partial = await verifiedPartialFindings(result, batch, snapshots);
         if (partial.length) {
           try { error.partialMarkdown = renderFindings({ findings: partial, pr: { number: 9 }, reviewMode }); }

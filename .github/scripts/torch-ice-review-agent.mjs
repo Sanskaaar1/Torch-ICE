@@ -212,9 +212,10 @@ export async function reviewBatches(batches, requestBatch, deadline) {
   for (const batch of batches) {
     let retryReason;
     let retryDraft;
+    let firstPartial;
     for (let attempt = 0; attempt < 2; attempt++) {
-      if (Date.now() >= deadline) throw new Error('Review evidence incomplete: deadline.');
       try {
+        if (Date.now() >= deadline) throw new Error('Review evidence incomplete: deadline.');
         const result = await requestBatch(batch, attempt, retryReason, retryDraft);
         if (Date.now() >= deadline) throw new Error('Review evidence incomplete: deadline.');
         validateBatchResult(result, batch);
@@ -226,7 +227,11 @@ export async function reviewBatches(batches, requestBatch, deadline) {
         findings.push(...result.findings);
         break;
       } catch (error) {
-        if (attempt === 1) throw error;
+        if (attempt === 1) {
+          if (!error.partialMarkdown && firstPartial) Object.assign(error, firstPartial);
+          throw error;
+        }
+        if (error.partialMarkdown) firstPartial = { partialMarkdown: error.partialMarkdown, partialBaseSha: error.partialBaseSha };
         const message = String(error.message);
         retryDraft = error.reviewDraft;
         retryReason = message.includes('Review evidence incomplete: diff reference quote') ? 'diff reference quote'
@@ -873,7 +878,7 @@ async function main() {
         return result;
       } catch (error) {
         if (attempt === 0 && result && String(error.message).startsWith('Review evidence incomplete:')) error.reviewDraft = result;
-        if (attempt === 1 && result && String(error.message).startsWith('Review evidence incomplete:')) {
+        if (result && String(error.message).startsWith('Review evidence incomplete:')) {
           const partial = await verifiedPartialFindings(result, batch, snapshots);
           if (partial.length) {
             try {
