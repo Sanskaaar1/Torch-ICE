@@ -218,7 +218,7 @@ export async function reviewBatches(batches, requestBatch, deadline) {
         const result = await requestBatch(batch, attempt, retryReason, retryDraft);
         if (Date.now() >= deadline) throw new Error('Review evidence incomplete: deadline.');
         validateBatchResult(result, batch);
-        if (retryDraft?.findings?.length && result.findings.length < retryDraft.findings.length) incomplete('retry dropped prior findings');
+        if (retryDraft?.findings?.length && !result.findings.length) incomplete('retry dropped prior findings');
         if (attempt === 0 && !result.findings.length) { retryReason = 'empty result'; continue; }
         for (const finding of result.findings) for (const ref of finding.references) {
           if (ref.kind !== 'snapshot') ref.source_path = batch.units.find((unit) => unit.id === ref.unit_id).path;
@@ -613,6 +613,16 @@ export async function verifySnapshotReferences(findings, snapshots) {
         break;
       }
       if (conciseRange() && ref.line_end <= lines.length && quoted(lines.slice(ref.line_start - 1, ref.line_end).join('\n'), ref.quote)) continue;
+      if (!truncated && !ref.quote.includes('\n')) {
+        const plain = (value) => value.replace(/[`*]/g, '').replace(/\s+/g, ' ').trim();
+        const quote = plain(ref.quote);
+        const matches = quote.length >= 12 ? lines.flatMap((line, index) => plain(line).includes(quote) ? [{ line, index }] : []) : [];
+        if (matches.length === 1) {
+          ref.line_start = ref.line_end = matches[0].index + 1;
+          ref.quote = matches[0].line.trim();
+          continue;
+        }
+      }
     } catch { /* An invalid path or unreadable file is an invalid reference. */ }
     throw new Error('Review evidence incomplete: invalid snapshot reference.');
   }

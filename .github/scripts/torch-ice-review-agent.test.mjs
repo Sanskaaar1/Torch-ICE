@@ -365,6 +365,17 @@ test('citation retry cannot silently discard a prior finding', async () => {
   assert.equal(attempts[1].draft.findings.length, 1);
 });
 
+test('a corrected retry may remove an unsupported finding', async () => {
+  const error = new Error('Review evidence incomplete: diff reference quote absent from assigned evidence.');
+  error.reviewDraft = { reviewed_unit_ids: ['u1'], findings: [batchFinding,
+    { ...batchFinding, evidence: 'unsupported', references: [{ ...batchFinding.references[0], quote: 'missing source' }] }] };
+  const findings = await agent.reviewBatches([batchU1], async (_batch, attempt) => {
+    if (!attempt) throw error;
+    return { ...completeBatch, findings: [batchFinding] };
+  }, Date.now() + 60_000);
+  assert.deepEqual(findings, [batchFinding]);
+});
+
 test('an incomplete review can show only independently verified findings', async () => {
   const invalid = { ...batchFinding, evidence: 'unverified claim', references: [{ ...batchFinding.references[0], quote: 'invented source' }] };
   const invalidSnapshot = { ...batchFinding, evidence: 'unverified context', references: [batchFinding.references[0],
@@ -462,6 +473,22 @@ test('snapshot citations accept the escaped text shown to the model and lines be
     await fs.writeFile(path.join(head, 'SKILL.md'), `${'padding\n'.repeat(1800)}<backend> is required\n`);
     const ref = { kind: 'snapshot', unit_id: null, view: null, side: null, line_start: 1801, line_end: 1801, quote: '&lt;backend&gt; is required', snapshot: 'head', path: 'SKILL.md' };
     await assert.doesNotReject(agent.verifySnapshotReferences([{ references: [ref] }], { base: head, head }));
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('snapshot citations resolve unique quotes with Markdown emphasis omitted', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-markdown-citation-'));
+  try {
+    await fs.writeFile(path.join(root, 'EVAL.md'), '5. **No meta-content in output**: These ground rules, skill instructions, agent instructions, procedural steps must stay internal.\n');
+    const ref = { kind: 'snapshot', unit_id: null, view: null, side: null, line_start: null, line_end: null,
+      quote: 'No meta-content in output: These ground rules, skill instructions, agent instructions, procedural steps', snapshot: 'head', path: 'EVAL.md' };
+    await assert.doesNotReject(agent.verifySnapshotReferences([{ references: [ref] }], { base: root, head: root }));
+    assert.deepEqual([ref.line_start, ref.line_end], [1, 1]);
+    assert.match(ref.quote, /\*\*No meta-content in output\*\*:/);
+    await assert.rejects(agent.verifySnapshotReferences([{ references: [{ ...ref, quote: 'No meta-content in output: invented rule' }] }], { base: root, head: root }), /Review evidence incomplete/);
+    await fs.appendFile(path.join(root, 'EVAL.md'), '6. **No meta-content in output**: These ground rules, skill instructions, agent instructions, procedural steps must stay internal.\n');
+    await assert.rejects(agent.verifySnapshotReferences([{ references: [{ ...ref, line_start: null, line_end: null,
+      quote: 'No meta-content in output: These ground rules, skill instructions, agent instructions, procedural steps' }] }], { base: root, head: root }), /Review evidence incomplete/);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
