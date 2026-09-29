@@ -71,7 +71,7 @@ export async function prepareFixture(name, root) {
 async function requestModel({ instructions, schema, name, input, deadline, usage, tools = [], toolChoice = 'none', maxOutputTokens = 6144 }) {
   const response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', signal: AbortSignal.timeout(reviewRequestTimeoutMs(deadline)),
     headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: MODEL, text: { format: { type: 'json_schema', name, strict: true, schema }, verbosity: 'medium' },
+    body: JSON.stringify({ model: MODEL, reasoning: { effort: 'high' }, text: { format: { type: 'json_schema', name, strict: true, schema }, verbosity: 'medium' },
       max_output_tokens: maxOutputTokens, store: false, instructions, tools, tool_choice: toolChoice,
       parallel_tool_calls: false, input }) });
   if (!response.ok) throw new Error(`OpenAI request failed (${response.status}).`);
@@ -125,7 +125,7 @@ async function main() {
   if (!offline && !process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is unavailable; live replay was not run.');
   const instructions = await fs.readFile(path.join(ROOT, '.github/prompts/torch-ice-review-agent.md'), 'utf8');
   const checklist = await fs.readFile(path.join(ROOT, '.claude/skills/torch-ice-review/checklist.md'), 'utf8');
-  const output = { model: MODEL, prompt_sha256: createHash('sha256').update(instructions).digest('hex'), baseline: 'PR #9 posted comment 5888856543', trials: [] };
+  const output = { model: MODEL, reasoning_effort: 'high', prompt_sha256: createHash('sha256').update(instructions).digest('hex'), baseline: 'PR #9 posted comment 5888856543', trials: [] };
   let failures = 0;
   const rejectedShape = (error) => error.reviewDraft?.findings?.map((finding) => ({
     path: finding.path, view: finding.view, unit_ids: finding.unit_ids,

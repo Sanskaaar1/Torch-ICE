@@ -800,7 +800,7 @@ async function main() {
         let response;
         try {
           response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', signal: AbortSignal.timeout(reviewRequestTimeoutMs(deadline)), headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({
-            model: 'gpt-5.6-terra', text: { format: { type: 'json_schema', name: 'review_batch', strict: true, schema: BATCH_RESULT_SCHEMA }, verbosity: 'medium' },
+            model: 'gpt-5.6-terra', reasoning: { effort: 'high' }, text: { format: { type: 'json_schema', name: 'review_batch', strict: true, schema: BATCH_RESULT_SCHEMA }, verbosity: 'medium' },
             max_output_tokens: attempt ? RETRY_MAX_OUTPUT_TOKENS : INITIAL_MAX_OUTPUT_TOKENS, store: false, instructions: batchInstructions,
             tools: EXPLORATION_TOOLS, tool_choice: toolChoice, parallel_tool_calls: false, input: requestInput,
           }) });
