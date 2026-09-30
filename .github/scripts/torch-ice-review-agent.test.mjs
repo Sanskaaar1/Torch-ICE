@@ -401,6 +401,7 @@ test('an incomplete review can show only independently verified findings', async
   const error = Object.assign(new Error('Review evidence incomplete: diff reference quote absent from assigned evidence.'), { partialMarkdown });
   const failure = formatFailureComment({ error, repository: { full_name: 'owner/repo' }, headSha: 'abc' });
   assert.match(failure.body, /Verified findings from this incomplete run/);
+  assert.doesNotMatch(failure.body, /no partial findings were posted/);
   assert.match(failure.body, /changed call/);
   assert.doesNotMatch(failure.body, /unverified claim/);
   assert.doesNotMatch(failure.body, /unverified context/);

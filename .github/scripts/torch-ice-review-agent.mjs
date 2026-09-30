@@ -733,7 +733,9 @@ function formatHistory(items) {
 }
 export function safeFailureReason(error) {
   const message = error instanceof Error ? error.message : '';
-  if (/Review evidence incomplete/.test(message)) return 'The review could not verify its evidence; no partial findings were posted.';
+  if (/Review evidence incomplete/.test(message)) return error.partialMarkdown
+    ? 'The review could not verify all its evidence.'
+    : 'The review could not verify its evidence; no partial findings were posted.';
   if (/OpenAI API key is not configured/.test(message)) return 'The OpenAI API key is not configured.';
   if (/Checked-out PR base/.test(message)) return 'The checked-out PR base could not be verified.';
   if (/Checked-out PR head/.test(message)) return 'The checked-out PR head could not be verified.';

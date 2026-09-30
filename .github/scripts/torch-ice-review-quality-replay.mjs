@@ -70,7 +70,7 @@ export async function prepareFixture(name, root) {
   }
   const units = prepareReviewUnits({ githubFiles: files, rawDiff: files.map((file) => file.patch).join('\n'), directEvidence });
   const batches = packReviewBatches(units);
-  const reviewMode = selectReviewMode(files);
+  const reviewMode = selectReviewMode([...files, ...directEvidence.map((item) => ({ filename: item.path, status: item.status === 'A' ? 'added' : 'modified' }))]);
   return { fixture, snapshots, files, units, batches, reviewMode };
 }
 

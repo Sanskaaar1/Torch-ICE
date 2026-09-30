@@ -82,6 +82,9 @@ unit_ids, category, view, path, evidence, impact, fix, severity, and references.
 Use blocking for unreachable behavior or invalid measurement, major for
 consequential incomplete behavior, and minor for presentation or provenance
 gaps. All prose fields are plain text without Markdown delimiters.
+If a flag selects a dimension checklist but never loads that dimension's
+`EVAL.md`, classify the dispatch finding as blocking even when the base
+framework `EVAL.md` still runs.
 
 Each reference has kind, unit_id, view, side, line_start, line_end, quote,
 snapshot, and path. For a diff reference, use an assigned unit, its pr or
