@@ -256,7 +256,7 @@ The base and head SHAs are checked again immediately before posting success.
 Review-quality fixtures can be checked locally with
 `node .github/scripts/torch-ice-review-quality-replay.mjs --offline`. With
 `OPENAI_API_KEY` configured, omit `--offline` to run local model replays of
-PR #9, PR #10, and corrected/control fixtures. The runner writes results under the
+PR #8, PR #9, PR #10, and corrected/control fixtures. The runner writes results under the
 system temporary directory and never posts to GitHub.
 Repository owners can also run the `Review Agent` workflow manually to replay
 these fixtures with the Actions secret; the sanitized results appear in the

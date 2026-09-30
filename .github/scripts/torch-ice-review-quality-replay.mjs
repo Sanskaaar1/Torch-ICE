@@ -16,7 +16,7 @@ import {
 
 const run = promisify(execFile);
 const MODEL = 'gpt-5.6-terra';
-const FIXTURES = ['original', 'corrected', 'general', 'pr10'];
+const FIXTURES = ['original', 'corrected', 'general', 'pr10', 'pr8'];
 const ROOT = path.resolve(import.meta.dirname, '../..');
 
 async function git(args) {
@@ -52,17 +52,22 @@ export async function prepareFixture(name, root) {
     await fs.writeFile(destination, before.replace(edit.find, edit.replace));
   }
   const files = [];
+  const directEvidence = [];
   for (const file of fixture.files) {
     const baseFile = path.join(snapshots.base, file);
     const headFile = path.join(snapshots.head, file);
     const baseExists = await fs.stat(baseFile).then(() => true, () => false);
     const headExists = await fs.stat(headFile).then(() => true, () => false);
-    const patch = await git(['diff', '--no-index', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--', baseExists ? baseFile : '/dev/null', headExists ? headFile : '/dev/null']);
-    if (patch) files.push({ filename: file, status: baseExists ? headExists ? 'modified' : 'removed' : 'added', patch,
+    const directPatch = await git(['diff', '--no-index', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--', baseExists ? baseFile : '/dev/null', headExists ? headFile : '/dev/null']);
+    if (directPatch) directEvidence.push({ path: file, status: baseExists ? headExists ? 'M' : 'D' : 'A', patch: directPatch });
+    const patch = fixture.pr_base
+      ? await git(['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', fixture.pr_base, fixture.head, '--', `:(literal)${file}`])
+      : directPatch;
+    const prBaseExists = fixture.pr_base ? await readAt(fixture.pr_base, file) !== null : baseExists;
+    if (patch) files.push({ filename: file, status: prBaseExists ? headExists ? 'modified' : 'removed' : 'added', patch,
       additions: patch.split(/\r?\n/).filter((line) => line.startsWith('+') && !line.startsWith('+++')).length,
       deletions: patch.split(/\r?\n/).filter((line) => line.startsWith('-') && !line.startsWith('---')).length });
   }
-  const directEvidence = files.map((file) => ({ path: file.filename, status: file.status === 'added' ? 'A' : file.status === 'removed' ? 'D' : 'M', patch: file.patch }));
   const units = prepareReviewUnits({ githubFiles: files, rawDiff: files.map((file) => file.patch).join('\n'), directEvidence });
   const batches = packReviewBatches(units);
   const reviewMode = selectReviewMode(files);
@@ -150,7 +155,7 @@ async function main() {
     try {
       const prepared = await prepareFixture(name, root);
       if (offline) output.trials.push({ name, files: prepared.files.length, units: prepared.units.length, batches: prepared.batches.length, reviewMode: prepared.reviewMode });
-      else for (let index = 0; index < (name === 'general' ? 1 : 3); index++) {
+      else for (let index = 0; index < (prepared.fixture.trials ?? (name === 'general' ? 1 : 3)); index++) {
         const usage = [];
         try { output.trials.push({ ...await liveTrial(prepared, instructions, checklist, usage), index, usage }); }
         catch (error) { failures++; output.trials.push({ name, index, error: error.message, partial_markdown: error.partialMarkdown ?? null, rejectedShape: rejectedShape(error), usage }); }

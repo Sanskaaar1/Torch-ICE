@@ -33,7 +33,7 @@ jobs:
           persist-credentials: false
 
       - name: Fetch pinned PR fixture commits
-        run: git fetch --no-tags origin 134115efd4be8377a933b94894d4616907e3f5df 06ee66c3ab960ded7b55c38b99ecb9a2653a51c4
+        run: git fetch --no-tags origin 134115efd4be8377a933b94894d4616907e3f5df 06ee66c3ab960ded7b55c38b99ecb9a2653a51c4 7590182fe98c5f1ae5448a79302b2c65af6e6491
 
       - name: Run local review-quality replay without GitHub writes
         env:

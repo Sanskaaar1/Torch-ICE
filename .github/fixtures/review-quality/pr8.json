@@ -1,0 +1,28 @@
+{
+  "name": "pr8-large",
+  "number": 8,
+  "base": "9f45ba8e4d7e147003556bc5a5935b0e9a0cad57",
+  "pr_base": "deb0cf6c036bad9e6206321e8aca360eeeb3aadf",
+  "head": "7590182fe98c5f1ae5448a79302b2c65af6e6491",
+  "files": [
+    ".claude/skills/torch-air-architecture-review/README.md",
+    ".claude/skills/torch-air-architecture-review/SKILL.md",
+    ".claude/skills/torch-air-architecture-review/checklist.md",
+    ".claude/skills/torch-ice-review/README.md",
+    ".claude/skills/torch-ice-review/SKILL.md",
+    ".claude/skills/torch-ice-review/checklist.md",
+    ".github/prompts/architecture-review-checklist.md",
+    ".github/prompts/torch-ice-review-agent.md",
+    ".github/scripts/torch-ice-review-agent.mjs",
+    ".github/scripts/torch-ice-review-agent.test.mjs",
+    ".github/workflows/torch-ice-review-agent.yml",
+    ".gitignore",
+    "README.md",
+    "SKILL.md",
+    "frameworks/pytorch/performance/EVAL.md",
+    "frameworks/pytorch/performance/checklist.md"
+  ],
+  "edits": [],
+  "trials": 1,
+  "expected": ["dispatch", "p95-sample", "accelerator-timing", "failure-isolation", "partial-report", "manual-verification", "report-hygiene"]
+}

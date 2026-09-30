@@ -27,7 +27,8 @@ source. Related topics may share one finding if each is stated clearly.
   and Torch-ICE/model provenance.
 
 For the corrected fixture, reject any finding alleging these defects if it
-ignores the explicit repairs or incorporated shared rule. For the general
+ignores the explicit repairs or incorporated shared rule. Its overall section
+weighting also has an explicit normalization denominator. For the general
 control, reject framework-assessment findings. In every trial, check that
 `--performance` is described as also producing an assessment, citation ranges
 include supporting changed lines, blocker findings precede minor findings,
@@ -43,3 +44,10 @@ unconditionally promises scored workload modes and a single readiness report,
 while the existing private-backend path selects a narrative template and a
 different report filename. Each PR #10 trial must identify that conflict with
 a changed-line citation and must not add framework-assessment findings.
+
+PR #8 is the larger, stale-branch control: its PR diff starts at
+`deb0cf6c036bad9e6206321e8aca360eeeb3aadf`, while its direct comparison
+uses base `9f45ba8e4d7e147003556bc5a5935b0e9a0cad57`; both end at
+`7590182fe98c5f1ae5448a79302b2c65af6e6491`. Its one live trial must
+complete without dropping either view and identify the same performance
+dispatch, p95, accelerator-timing, and four execution-rule gaps as PR #9.

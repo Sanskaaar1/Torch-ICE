@@ -532,15 +532,27 @@ test('old-side citations and metadata-only changes retain real anchors', () => {
 test('pinned replay fixtures include both historical defects and controls', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-fixtures-'));
   try {
-    for (const name of ['original', 'corrected', 'general', 'pr10']) {
+    for (const name of ['original', 'corrected', 'general', 'pr10', 'pr8']) {
       const fixture = await prepareFixture(name, path.join(root, name));
       assert.ok(fixture.batches.length);
       assert.equal(fixture.reviewMode, ['general', 'pr10'].includes(name) ? 'general' : 'framework-assessment');
       if (name === 'original') assert.match(fixture.units.map((unit) => unit.evidence).join('\n'), /at least five timed runs/);
-      if (name === 'corrected') assert.match(fixture.units.map((unit) => unit.evidence).join('\n'), /at least 100 independent measured runs/);
+      if (name === 'corrected') {
+        const evidence = fixture.units.map((unit) => unit.evidence).join('\n');
+        assert.match(evidence, /at least 100 independent measured runs/);
+        assert.match(evidence, /sum\(section_percentage \* \(1 \/ level\)\) \/ sum\(1 \/ level\)/);
+      }
       if (name === 'pr10') {
         assert.match(fixture.units.map((unit) => unit.evidence).join('\n'), /All modes run the same full PyTorch evaluation/);
         assert.equal(fixture.files.length, 1);
+      }
+      if (name === 'pr8') {
+        assert.ok(fixture.units.length >= 20);
+        assert.ok(fixture.batches[0].evidence.length > 100_000);
+        assert.equal(fixture.files.length, 12);
+        assert.deepEqual(fixture.units.find((unit) => unit.path === '.gitignore').views, ['base_head']);
+        assert.match(fixture.batches[0].evidence, /current base to head/);
+        assert.match(fixture.batches[0].evidence, /PR diff/);
       }
     }
   } finally { await fs.rm(root, { recursive: true, force: true }); }
