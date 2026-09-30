@@ -260,7 +260,8 @@ PR #8, PR #9, PR #10, and corrected/control fixtures. The runner writes results 
 system temporary directory and never posts to GitHub.
 Repository owners can also run the `Review Agent` workflow manually to replay
 these fixtures with the Actions secret; the sanitized results appear in the
-workflow log without posting PR comments.
+workflow log without posting PR comments. Set its optional `fixture` input to
+`pr8` for a focused replay.
 
 Repository administrators must configure the `OPENAI_API_KEY` Actions secret.
 The workflow requires only `contents: read`, `pull-requests: write`, and

@@ -10,7 +10,7 @@ import { packReviewBatches } from './torch-ice-review-evidence.mjs';
 import {
   BATCH_RESULT_SCHEMA, CITATION_CORRECTIONS_SCHEMA, EXPLORATION_TOOLS, applyCitationCorrections,
   batchStageInstructions, buildReviewInput, parseBatchResponse,
-  prepareReviewUnits, readFileContext, redactSensitiveText, renderFindings, reviewBatches, verifiedPartialFindings,
+  openaiFailure, prepareReviewUnits, readFileContext, redactSensitiveText, renderFindings, reviewBatches, verifiedPartialFindings,
   reviewRequestTimeoutMs, runExplorationLoop, selectReviewMode, validateBatchResult, verifySnapshotReferences,
 } from './torch-ice-review-agent.mjs';
 
@@ -80,7 +80,7 @@ async function requestModel({ instructions, schema, name, input, deadline, usage
     body: JSON.stringify({ model: MODEL, reasoning: { effort: 'high' }, text: { format: { type: 'json_schema', name, strict: true, schema }, verbosity: 'medium' },
       max_output_tokens: maxOutputTokens, store: false, instructions, tools, tool_choice: toolChoice,
       parallel_tool_calls: false, input }) });
-  if (!response.ok) throw new Error(`OpenAI request failed (${response.status}).`);
+  if (!response.ok) throw await openaiFailure(response);
   const result = await response.json();
   usage.push({ stage: name, usage: result.usage ?? null });
   return result;
@@ -139,6 +139,8 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
 
 async function main() {
   const offline = process.argv.includes('--offline');
+  const selected = process.env.REVIEW_FIXTURE;
+  if (selected && !FIXTURES.includes(selected)) throw new Error('Unknown replay fixture.');
   if (!offline && !process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is unavailable; live replay was not run.');
   const instructions = await fs.readFile(path.join(ROOT, '.github/prompts/torch-ice-review-agent.md'), 'utf8');
   const checklist = await fs.readFile(path.join(ROOT, '.claude/skills/torch-ice-review/checklist.md'), 'utf8');
@@ -150,7 +152,7 @@ async function main() {
       snapshot: ref.snapshot, path: ref.path, line_start: ref.line_start, line_end: ref.line_end,
       quote: ref.quote })),
   }));
-  for (const name of FIXTURES) {
+  for (const name of selected ? [selected] : FIXTURES) {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), `torch-ice-replay-${name}-`));
     try {
       const prepared = await prepareFixture(name, root);

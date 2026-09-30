@@ -4,6 +4,11 @@ on:
   issue_comment:
     types: [created]
   workflow_dispatch:
+    inputs:
+      fixture:
+        description: Optional pinned fixture name for a focused read-only replay
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -38,6 +43,7 @@ jobs:
       - name: Run local review-quality replay without GitHub writes
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          REVIEW_FIXTURE: ${{ inputs.fixture }}
         run: node .github/scripts/torch-ice-review-quality-replay.mjs --stdout
 
   review:

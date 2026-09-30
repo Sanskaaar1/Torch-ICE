@@ -752,6 +752,11 @@ export function safeFailureReason(error) {
   if (/GitHub API URL was not allowed/.test(message)) return 'A GitHub API URL was rejected by the review agent.';
   return 'An internal torch-ice-review-agent error occurred.';
 }
+export async function openaiFailure(response) {
+  const body = await Promise.resolve().then(() => response.json()).catch(() => null);
+  const code = [body?.error?.code, body?.error?.type].find((value) => typeof value === 'string' && /^[a-z0-9_]{1,64}$/.test(value));
+  return new Error(`OpenAI request failed (${response.status}${code ? `; ${code}` : ''}).`);
+}
 export function reviewRequestTimeoutMs(deadline, now = Date.now()) {
   const remaining = deadline - now;
   if (remaining <= 0) throw new Error('Review deadline exceeded.');
@@ -893,7 +898,7 @@ async function main() {
           if (error?.name === 'TimeoutError') throw new Error('OpenAI request timed out.');
           throw error;
         }
-        if (!response.ok) throw new Error(`OpenAI request failed (${response.status}).`);
+        if (!response.ok) throw await openaiFailure(response);
         return response.json();
       }, input, snapshots, explorationBudget);
       log('openai_batch_response', { unit_ids: batch.ids, attempt, latency_ms: Date.now() - started, status: exploration.response.status,

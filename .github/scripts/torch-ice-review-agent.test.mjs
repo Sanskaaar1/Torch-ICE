@@ -264,6 +264,15 @@ test('classifies OpenAI timeouts explicitly for public failure comments', () => 
   assert.equal(safeFailureReason(new Error('Exploration exceeded its fixed result budget.')), 'The review exceeded its fixed exploration result-size limit.');
 });
 
+test('reports only bounded OpenAI error codes, never untrusted error prose', async () => {
+  const coded = await agent.openaiFailure({ status: 403, json: async () => ({ error: { code: 'misalignment_policy_violation', message: 'secret or prompt text' } }) });
+  assert.equal(coded.message, 'OpenAI request failed (403; misalignment_policy_violation).');
+  const unsafe = await agent.openaiFailure({ status: 403, json: async () => ({ error: { code: 'bad\nInjected text', type: 'invalid_request_error' } }) });
+  assert.equal(unsafe.message, 'OpenAI request failed (403; invalid_request_error).');
+  const unreadable = await agent.openaiFailure({ status: 403, json: async () => { throw new Error('not JSON'); } });
+  assert.equal(unreadable.message, 'OpenAI request failed (403).');
+});
+
 test('uses the remaining review budget and preserves failure comments for preflight errors', () => {
   assert.equal(reviewRequestTimeoutMs(200_000, 0), 180_000);
   assert.equal(reviewRequestTimeoutMs(5_000, 0), 5_000);
