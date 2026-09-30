@@ -529,15 +529,19 @@ test('old-side citations and metadata-only changes retain real anchors', () => {
   assert.throws(() => verify('Path: src/a.js\nPR diff (modified)\n@@ -7 +7 @@\n-old guard\n+new call', ref('metadata', null, 'old guard')), /Review evidence incomplete/);
 });
 
-test('pinned replay fixtures produce original, corrected, and general-only evidence', async () => {
+test('pinned replay fixtures include both historical defects and controls', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-fixtures-'));
   try {
-    for (const name of ['original', 'corrected', 'general']) {
+    for (const name of ['original', 'corrected', 'general', 'pr10']) {
       const fixture = await prepareFixture(name, path.join(root, name));
       assert.ok(fixture.batches.length);
-      assert.equal(fixture.reviewMode, name === 'general' ? 'general' : 'framework-assessment');
+      assert.equal(fixture.reviewMode, ['general', 'pr10'].includes(name) ? 'general' : 'framework-assessment');
       if (name === 'original') assert.match(fixture.units.map((unit) => unit.evidence).join('\n'), /at least five timed runs/);
       if (name === 'corrected') assert.match(fixture.units.map((unit) => unit.evidence).join('\n'), /at least 100 independent measured runs/);
+      if (name === 'pr10') {
+        assert.match(fixture.units.map((unit) => unit.evidence).join('\n'), /All modes run the same full PyTorch evaluation/);
+        assert.equal(fixture.files.length, 1);
+      }
     }
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });

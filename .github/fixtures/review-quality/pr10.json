@@ -1,0 +1,9 @@
+{
+  "name": "pr10-original",
+  "number": 10,
+  "base": "b851531d6a4ede30d8dcc2d27e78642a80491e20",
+  "head": "06ee66c3ab960ded7b55c38b99ecb9a2653a51c4",
+  "files": ["SKILL.md"],
+  "edits": [],
+  "expected": ["private-backend-mode-conflict"]
+}

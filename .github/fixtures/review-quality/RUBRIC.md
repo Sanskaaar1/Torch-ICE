@@ -35,3 +35,11 @@ and the recommendation says “Changes needed before merge; advisory review”
 when a blocker remains. Record pass/fail per topic, false positives, latency,
 model, prompt hash, and usage from the JSON replay artifact. The replay runner
 never posts to GitHub.
+
+PR #10 is a second pinned regression case at base
+`b851531d6a4ede30d8dcc2d27e78642a80491e20` and head
+`06ee66c3ab960ded7b55c38b99ecb9a2653a51c4`. Its changed `SKILL.md`
+unconditionally promises scored workload modes and a single readiness report,
+while the existing private-backend path selects a narrative template and a
+different report filename. Each PR #10 trial must identify that conflict with
+a changed-line citation and must not add framework-assessment findings.

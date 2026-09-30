@@ -16,7 +16,7 @@ import {
 
 const run = promisify(execFile);
 const MODEL = 'gpt-5.6-terra';
-const FIXTURES = ['original', 'corrected', 'general'];
+const FIXTURES = ['original', 'corrected', 'general', 'pr10'];
 const ROOT = path.resolve(import.meta.dirname, '../..');
 
 async function git(args) {
@@ -102,7 +102,7 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
     const fileContext = await readFileContext(snapshots.head, contextFiles);
     const prior = repairing ? repairIndexes.map((index) => ({ index, finding: retryDraft.findings[index] })) : retryDraft;
     const priorReview = prior ? `\n\n<untrusted_prior_review>\n${JSON.stringify(prior).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}\n</untrusted_prior_review>` : '';
-    const input = buildReviewInput({ pr: { number: 9, title: fixture.name }, headSha: fixture.head, files: batchFiles,
+    const input = buildReviewInput({ pr: { number: fixture.number ?? 9, title: fixture.name }, headSha: fixture.head, files: batchFiles,
       batchEvidence: batch.evidence, fileContext, history: [], checklist, reviewMode, reservedChars: priorReview.length }).input;
     const requestInput = redactSensitiveText(`${input}${priorReview}`).text;
     const stage = batchStageInstructions(instructions, attempt, retryReason, repairing ? repairIndexes : []);
@@ -121,14 +121,14 @@ export async function liveTrial(prepared, instructions, checklist, usage) {
         const partial = await verifiedPartialFindings(result, batch, snapshots);
         if (attempt === 0 && Array.isArray(result.findings)) error.repairIndexes = result.findings.flatMap((finding, index) => partial.includes(finding) ? [] : [index]);
         if (partial.length) {
-          try { error.partialMarkdown = renderFindings({ findings: partial, pr: { number: 9 }, reviewMode }); }
+          try { error.partialMarkdown = renderFindings({ findings: partial, pr: { number: fixture.number ?? 9 }, reviewMode }); }
           catch { /* Preserve the original validation error. */ }
         }
       }
       throw error;
     }
   }, deadline);
-  const markdown = renderFindings({ findings, pr: { number: 9, title: fixture.name }, reviewMode });
+  const markdown = renderFindings({ findings, pr: { number: fixture.number ?? 9, title: fixture.name }, reviewMode });
   return { name: fixture.name, latency_ms: Date.now() - started, findings: findings.length, markdown };
 }
 
